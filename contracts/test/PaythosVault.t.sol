@@ -1,72 +1,225 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
-import "../src/PaythosVault.sol";
-import "./mocks/MockUSDC.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "../src/core/PaythosVault.sol";
+import "../src/interfaces/IPaythosTypes.sol";
 
-contract PaythosVaultTest is Test {
+contract MockUSDC is ERC20 {
+    constructor() ERC20("USD Coin", "USDC") {}
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+}
+
+contract PaythosVaultTest is Test, IPaythosTypes {
     PaythosVault public vault;
     MockUSDC public usdc;
 
-    address public owner = address(1);
-    address public agentKey = address(2);
-    address public merchant = address(3);
-    address public treasury = address(4);
+    address public owner = address(0x1);
+    address public treasury = address(0x2);
+    address public merchant = address(0x3);
 
-    uint256 public constant INITIAL_BALANCE = 1000 * 1e6;
-    uint256 public constant DAILY_LIMIT = 50 * 1e6;
-    uint256 public constant DURATION = 7 days;
+    uint256 public agentPrivateKey = 0xA11CE;
+    address public agentKey;
+
+    uint256 public constant INITIAL_FEE_BPS = 150; // 1.50%
+    uint256 public constant DAILY_LIMIT = 1000 * 1e6; // 1,000 USDC
 
     function setUp() public {
+        agentKey = vm.addr(agentPrivateKey);
+
         vm.startPrank(owner);
+        vault = new PaythosVault(treasury, INITIAL_FEE_BPS);
         usdc = new MockUSDC();
-        vault = new PaythosVault(treasury);
-        usdc.mint(address(vault), INITIAL_BALANCE);
-        vault.createSession(agentKey, DAILY_LIMIT, DURATION);
+
+        // Authorize agent session for 7 days
+        vault.createSession(agentKey, DAILY_LIMIT, 7 days);
         vm.stopPrank();
+
+        // Fund the vault with 50,000 USDC
+        usdc.mint(address(vault), 50_000 * 1e6);
     }
 
-    function test_AgentCanExecutePayment() public {
-        uint256 amount = 10 * 1e6;
-        vm.prank(agentKey);
-        vault.executePayment(address(usdc), merchant, amount);
-
-        assertEq(usdc.balanceOf(merchant), amount);
-        (, uint256 spentToday,,,) = vault.sessions(agentKey);
-        assertEq(spentToday, amount);
-    }
-
-    function test_RevertWhen_DailyLimitExceeded() public {
-        uint256 illegal = 60 * 1e6;
-        vm.prank(agentKey);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                PaythosVault.DailyLimitExceeded.selector,
-                illegal,
-                DAILY_LIMIT
+    function _signVoucher(
+        PaymentVoucher memory voucher,
+        uint256 signerPk
+    ) internal view returns (bytes memory) {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                vault.VOUCHER_TYPEHASH(),
+                voucher.token,
+                voucher.merchant,
+                voucher.agentKey,
+                voucher.sessionId,
+                voucher.cumulativeAmount,
+                voucher.expiresAt,
+                voucher.nonce
             )
         );
-        vault.executePayment(address(usdc), merchant, illegal);
+
+        bytes32 digest = keccak256(
+            abi.encodePacked("\x19\x01", vault.getDomainSeparator(), structHash)
+        );
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPk, digest);
+        return abi.encodePacked(r, s, v);
     }
 
-    function test_RevertWhen_SessionExpired() public {
-        vm.warp(block.timestamp + 8 days);
-        vm.prank(agentKey);
-        vm.expectRevert(PaythosVault.SessionExpired.selector);
-        vault.executePayment(address(usdc), merchant, 10 * 1e6);
+    function test_InitialState() public view {
+        assertEq(vault.owner(), owner);
+        assertEq(vault.treasury(), treasury);
+        assertEq(vault.protocolFeeBps(), INITIAL_FEE_BPS);
     }
 
-    function test_ProtocolFeeDeduction() public {
+    function test_SettleVoucher_CumulativeDeltasAndFee() public {
+        PaymentVoucher memory v1 = PaymentVoucher({
+            token: address(usdc),
+            merchant: merchant,
+            agentKey: agentKey,
+            sessionId: 1,
+            cumulativeAmount: 10 * 1e6,
+            expiresAt: block.timestamp + 1 hours,
+            nonce: 1
+        });
+        bytes memory sig1 = _signVoucher(v1, agentPrivateKey);
+        vault.settleVoucher(v1, sig1);
+
+        assertEq(usdc.balanceOf(treasury), 150_000);
+        assertEq(usdc.balanceOf(merchant), 9_850_000);
+
+        PaymentVoucher memory v2 = PaymentVoucher({
+            token: address(usdc),
+            merchant: merchant,
+            agentKey: agentKey,
+            sessionId: 1,
+            cumulativeAmount: 25 * 1e6,
+            expiresAt: block.timestamp + 1 hours,
+            nonce: 2
+        });
+        bytes memory sig2 = _signVoucher(v2, agentPrivateKey);
+        vault.settleVoucher(v2, sig2);
+
+        assertEq(usdc.balanceOf(treasury), 375_000);
+        assertEq(usdc.balanceOf(merchant), 24_625_000);
+    }
+
+    function test_Revert_NonMonotonicVoucher() public {
+        PaymentVoucher memory v1 = PaymentVoucher({
+            token: address(usdc),
+            merchant: merchant,
+            agentKey: agentKey,
+            sessionId: 1,
+            cumulativeAmount: 50 * 1e6,
+            expiresAt: block.timestamp + 1 hours,
+            nonce: 1
+        });
+        bytes memory sig1 = _signVoucher(v1, agentPrivateKey);
+        vault.settleVoucher(v1, sig1);
+
+        PaymentVoucher memory v2 = v1;
+        v2.cumulativeAmount = 40 * 1e6;
+        bytes memory sig2 = _signVoucher(v2, agentPrivateKey);
+
+        vm.expectRevert();
+        vault.settleVoucher(v2, sig2);
+    }
+
+    function test_Revert_InvalidSignature() public {
+        uint256 attackerPk = 0xBAD;
+        PaymentVoucher memory v = PaymentVoucher({
+            token: address(usdc),
+            merchant: merchant,
+            agentKey: agentKey,
+            sessionId: 1,
+            cumulativeAmount: 10 * 1e6,
+            expiresAt: block.timestamp + 1 hours,
+            nonce: 1
+        });
+        bytes memory badSig = _signVoucher(v, attackerPk);
+
+        vm.expectRevert(PaythosVault.InvalidSignature.selector);
+        vault.settleVoucher(v, badSig);
+    }
+
+    function test_Revert_DailyLimitExceeded() public {
+        PaymentVoucher memory v = PaymentVoucher({
+            token: address(usdc),
+            merchant: merchant,
+            agentKey: agentKey,
+            sessionId: 1,
+            cumulativeAmount: DAILY_LIMIT + 1,
+            expiresAt: block.timestamp + 1 hours,
+            nonce: 1
+        });
+        bytes memory sig = _signVoucher(v, agentPrivateKey);
+
+        vm.expectRevert();
+        vault.settleVoucher(v, sig);
+    }
+
+    function test_WithdrawalTimelockProtection() public {
         vm.startPrank(owner);
-        vault.setFeeConfig(treasury, 100); // 1% fee
-        vault.createSession(agentKey, 200 * 1e6, DURATION);
+
+        vault.queueWithdrawal(address(usdc), 5_000 * 1e6);
+
+        vm.expectRevert();
+        vault.executeWithdrawal(address(usdc), owner);
+
+        vm.warp(block.timestamp + 6 hours - 1);
+        vm.expectRevert();
+        vault.executeWithdrawal(address(usdc), owner);
+
+        vm.warp(block.timestamp + 2);
+        vault.executeWithdrawal(address(usdc), owner);
+        assertEq(usdc.balanceOf(owner), 5_000 * 1e6);
+
         vm.stopPrank();
+    }
 
-        vm.prank(agentKey);
-        vault.executePayment(address(usdc), merchant, 100 * 1e6);
+    function testFuzz_CumulativeMonotonicDeltas(uint32 delta1, uint32 delta2) public {
+        vm.assume(delta1 > 0 && delta1 < DAILY_LIMIT / 2);
+        vm.assume(delta2 > 0 && delta2 < DAILY_LIMIT / 2);
 
-        assertEq(usdc.balanceOf(treasury), 1 * 1e6);
-        assertEq(usdc.balanceOf(merchant), 99 * 1e6);
+        uint256 d1 = uint256(delta1);
+        uint256 d2 = uint256(delta2);
+        uint256 total = d1 + d2;
+
+        // Voucher 1
+        PaymentVoucher memory v1 = PaymentVoucher({
+            token: address(usdc),
+            merchant: merchant,
+            agentKey: agentKey,
+            sessionId: 1,
+            cumulativeAmount: d1,
+            expiresAt: block.timestamp + 1 hours,
+            nonce: 1
+        });
+        vault.settleVoucher(v1, _signVoucher(v1, agentPrivateKey));
+
+        // Voucher 2
+        PaymentVoucher memory v2 = PaymentVoucher({
+            token: address(usdc),
+            merchant: merchant,
+            agentKey: agentKey,
+            sessionId: 1,
+            cumulativeAmount: total,
+            expiresAt: block.timestamp + 1 hours,
+            nonce: 2
+        });
+        vault.settleVoucher(v2, _signVoucher(v2, agentPrivateKey));
+
+        // Exact delta fees per transaction
+        uint256 fee1 = (d1 * INITIAL_FEE_BPS) / 10_000;
+        uint256 fee2 = (d2 * INITIAL_FEE_BPS) / 10_000;
+        uint256 totalFee = fee1 + fee2;
+        uint256 totalMerchant = (d1 - fee1) + (d2 - fee2);
+
+        assertEq(usdc.balanceOf(treasury), totalFee);
+        assertEq(usdc.balanceOf(merchant), totalMerchant);
+
+        // Invariant: Conservation of Value (Zero Leakage)
+        assertEq(usdc.balanceOf(treasury) + usdc.balanceOf(merchant), total);
     }
 }

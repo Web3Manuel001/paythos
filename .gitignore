@@ -18,3 +18,4 @@ contracts/broadcast/
 
 # System
 .DS_Store
+.env

@@ -19,5 +19,9 @@
     "type": "git",
     "url": "https://github.com/Web3Manuel001/agentpay.git"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "tsx": "^4.23.15",
+    "viem": "^2.57.4"
+  }
 }
