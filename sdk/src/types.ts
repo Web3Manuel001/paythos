@@ -43,3 +43,5 @@ export interface X402PaymentResponse {
   network: string;
   errorReason?: string | null;
 }
+// Export Paythos EIP-712 types
+export * from './types/index';
