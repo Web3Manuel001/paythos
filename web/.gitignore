@@ -39,3 +39,21 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.env
+.env*.local
+node_modules/
+packages/contracts/cache/
+packages/contracts/out/
+broadcast/
+cache/
+out/
+.next/
+.env
+.env*.local
+node_modules/
+packages/contracts/cache/
+packages/contracts/out/
+broadcast/
+cache/
+out/
+.next/
