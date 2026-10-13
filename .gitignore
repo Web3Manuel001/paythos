@@ -19,3 +19,10 @@ contracts/broadcast/
 # System
 .DS_Store
 .env
+broadcast/
+cache/
+contracts/out/
+contracts/cache/
+.env
+.next/
+node_modules/

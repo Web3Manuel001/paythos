@@ -1,8 +1,0 @@
-{
-  "transactions": [
-    {
-      "rpc": "https://sepolia.base.org"
-    }
-  ],
-  "recovery_generation": "0x04179f7822051cf907dc4142e22950e39689208035bfe14606755249edc9f6d4"
-}

@@ -1,27 +1,18 @@
 {
   "name": "paythos",
-  "version": "0.1.0",
-  "description": "Paythos — The Monetary Ethos for Autonomous AI Agents on Base L2",
-  "type": "module",
-  "main": "./sdk/dist/index.js",
-  "types": "./sdk/dist/index.d.ts",
-  "exports": {
-    ".": {
-      "import": "./sdk/dist/index.js",
-      "types": "./sdk/dist/index.d.ts"
-    },
-    "./middleware": {
-      "import": "./sdk/dist/middleware.js",
-      "types": "./sdk/dist/middleware.d.ts"
-    }
+  "version": "2.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix web run dev",
+    "build": "npm --prefix web run build",
+    "start": "npm --prefix web run start",
+    "test:contracts": "forge test",
+    "test:sdk": "npx tsx test-smoke.ts"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/Web3Manuel001/agentpay.git"
-  },
-  "license": "MIT",
   "dependencies": {
-    "tsx": "^4.23.15",
-    "viem": "^2.57.4"
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
   }
 }
