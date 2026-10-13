@@ -2,90 +2,6 @@
 
 import React, { useState } from 'react';
 
-// --- AUTHENTIC ECOSYSTEM LOGOS (REAL VECTOR SVGS) ---
-
-function BaseLogo({ className = "w-5 h-5" }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 115 115" className={className} fill="none">
-      <circle cx="57.5" cy="57.5" r="57.5" fill="#0052FF" />
-      <path
-        d="M57.5 95C78.2107 95 95 78.2107 95 57.5C95 36.7893 78.2107 20 57.5 20C37.6083 20 21.3283 35.459 20.0801 55.0347H69.4583V59.9653H20.0801C21.3283 79.541 37.6083 95 57.5 95Z"
-        fill="white"
-      />
-    </svg>
-  );
-}
-
-function ClaudeLogo({ className = "w-5 h-5" }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} fill="none">
-      <path
-        d="M12 2C6.477 2 2 6.477 2 12C2 17.523 6.477 22 12 22C17.523 22 22 17.523 22 12C22 6.477 17.523 2 12 2Z"
-        fill="#D97706"
-        fillOpacity="0.15"
-      />
-      <path
-        d="M13.8 6.5H10.2L6 17.5H9.2L10.1 15H13.9L14.8 17.5H18L13.8 6.5ZM10.9 12.6L12 9.5L13.1 12.6H10.9Z"
-        fill="#D97706"
-      />
-    </svg>
-  );
-}
-
-function LangChainLogo({ className = "w-5 h-5" }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} fill="none">
-      <rect width="24" height="24" rx="6" fill="#1C3C3C" />
-      <path
-        d="M9 14.5L14.5 9M13 15.5L16 12.5C17.1046 11.3954 17.1046 9.60457 16 8.5C14.8954 7.39543 13.1046 7.39543 12 8.5L10 10.5M11 8.5L8 11.5C6.89543 12.6046 6.89543 14.3954 8 15.5C9.10457 16.6046 10.8954 16.6046 12 15.5L14 13.5"
-        stroke="#22C55E"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function ElizaLogo({ className = "w-5 h-5" }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} fill="none">
-      <rect width="24" height="24" rx="6" fill="#18181B" stroke="#3F3F46" />
-      <path
-        d="M6 8H8V10H6V8ZM16 8H18V10H16V8ZM8 14H16V16H8V14ZM6 12H18V14H6V12Z"
-        fill="#EC4899"
-      />
-    </svg>
-  );
-}
-
-function ViemLogo({ className = "w-5 h-5" }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} fill="none">
-      <rect width="24" height="24" rx="6" fill="#0C0A09" stroke="#292524" />
-      <path
-        d="M6 7L12 17L18 7"
-        stroke="#F59E0B"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function FoundryLogo({ className = "w-5 h-5" }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} fill="none">
-      <rect width="24" height="24" rx="6" fill="#18181B" stroke="#3F3F46" />
-      <path
-        d="M7 6H17V9H14V18H10V9H7V6Z"
-        fill="#A1A1AA"
-      />
-    </svg>
-  );
-}
-
 // --- RAW CODE SNIPPETS FOR COPYING ---
 
 const CODE_RAW = {
@@ -392,55 +308,97 @@ export default function PaythosInterface() {
         </div>
       </header>
 
-      {/* Official Ecosystem & Platform Logos Strip */}
-      <section id="ecosystem" className="max-w-7xl mx-auto px-6 py-12 border-b border-zinc-800/60 relative z-10">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+      {/* Official Ecosystem & Platform Logos Showcase (Using web/public/brands) */}
+      <section id="ecosystem" className="max-w-7xl mx-auto px-6 py-16 border-b border-zinc-800/60 relative z-10">
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
           <div>
-            <div className="text-xs font-mono text-zinc-500 uppercase tracking-wider">Ecosystem Interoperability</div>
-            <div className="text-sm font-semibold text-zinc-200 mt-0.5">Compatible with leading agent runtimes & standards</div>
+            <div className="text-xs font-mono text-zinc-500 uppercase tracking-wider">Ecosystem & Runtime Interoperability</div>
+            <h2 className="text-xl sm:text-2xl font-semibold text-white tracking-tight mt-1">
+              Integrated across the autonomous machine stack.
+            </h2>
+          </div>
+          <p className="text-xs font-mono text-zinc-500 max-w-sm">
+            Native adapters and SDK connectors for leading L2 networks, agent runtimes, and inference engines.
+          </p>
+        </div>
+
+        {/* 8-Brand Architectural Grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 font-mono text-xs">
+          {/* Base */}
+          <div className="bg-zinc-900/40 border border-zinc-800/80 hover:border-zinc-700 p-4 rounded-lg flex items-center space-x-3.5 transition group">
+            <img src="/brands/base.png" alt="Base L2" className="h-7 w-7 object-contain rounded" />
+            <div>
+              <div className="text-white font-medium group-hover:text-blue-400 transition">Base L2</div>
+              <div className="text-[10px] text-zinc-500">Settlement Rail</div>
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-6 sm:gap-8">
-            {/* Base */}
-            <div className="flex items-center space-x-2 text-zinc-400 hover:text-white transition group">
-              <BaseLogo className="w-5 h-5 transition-transform group-hover:scale-110" />
-              <span className="text-xs font-mono font-medium">Base L2</span>
+          {/* Claude / Anthropic */}
+          <div className="bg-zinc-900/40 border border-zinc-800/80 hover:border-zinc-700 p-4 rounded-lg flex items-center space-x-3.5 transition group">
+            <img src="/brands/claude.png" alt="Anthropic Claude" className="h-6 w-auto object-contain" />
+            <div>
+              <div className="text-white font-medium group-hover:text-amber-400 transition">Claude</div>
+              <div className="text-[10px] text-zinc-500">MCP Standard</div>
             </div>
+          </div>
 
-            {/* Claude / Anthropic */}
-            <div className="flex items-center space-x-2 text-zinc-400 hover:text-white transition group">
-              <ClaudeLogo className="w-5 h-5 transition-transform group-hover:scale-110" />
-              <span className="text-xs font-mono font-medium">Anthropic MCP</span>
+          {/* Cursor */}
+          <div className="bg-zinc-900/40 border border-zinc-800/80 hover:border-zinc-700 p-4 rounded-lg flex items-center space-x-3.5 transition group">
+            <img src="/brands/cursor.webp" alt="Cursor IDE" className="h-6 w-auto object-contain filter invert" />
+            <div>
+              <div className="text-white font-medium group-hover:text-zinc-300 transition">Cursor</div>
+              <div className="text-[10px] text-zinc-500">Autonomous IDE</div>
             </div>
+          </div>
 
-            {/* ElizaOS */}
-            <div className="flex items-center space-x-2 text-zinc-400 hover:text-white transition group">
-              <ElizaLogo className="w-5 h-5 transition-transform group-hover:scale-110" />
-              <span className="text-xs font-mono font-medium">ElizaOS</span>
+          {/* ElizaOS */}
+          <div className="bg-zinc-900/40 border border-zinc-800/80 hover:border-zinc-700 p-4 rounded-lg flex items-center space-x-3.5 transition group">
+            <img src="/brands/eliza.png" alt="ElizaOS" className="h-7 w-auto object-contain rounded" />
+            <div>
+              <div className="text-white font-medium group-hover:text-orange-400 transition">ElizaOS</div>
+              <div className="text-[10px] text-zinc-500">Agent Swarms</div>
             </div>
+          </div>
 
-            {/* LangChain */}
-            <div className="flex items-center space-x-2 text-zinc-400 hover:text-white transition group">
-              <LangChainLogo className="w-5 h-5 transition-transform group-hover:scale-110" />
-              <span className="text-xs font-mono font-medium">LangChain</span>
+          {/* Groq */}
+          <div className="bg-zinc-900/40 border border-zinc-800/80 hover:border-zinc-700 p-4 rounded-lg flex items-center space-x-3.5 transition group">
+            <img src="/brands/groq.webp" alt="Groq LPU" className="h-6 w-auto object-contain" />
+            <div>
+              <div className="text-white font-medium group-hover:text-orange-500 transition">Groq</div>
+              <div className="text-[10px] text-zinc-500">LPU Inference</div>
             </div>
+          </div>
 
-            {/* Viem */}
-            <div className="flex items-center space-x-2 text-zinc-400 hover:text-white transition group">
-              <ViemLogo className="w-5 h-5 transition-transform group-hover:scale-110" />
-              <span className="text-xs font-mono font-medium">Viem</span>
+          {/* LangChain */}
+          <div className="bg-zinc-900/40 border border-zinc-800/80 hover:border-zinc-700 p-4 rounded-lg flex items-center space-x-3.5 transition group">
+            <img src="/brands/langchain.svg" alt="LangChain" className="h-6 w-auto object-contain" />
+            <div>
+              <div className="text-white font-medium group-hover:text-emerald-400 transition">LangChain</div>
+              <div className="text-[10px] text-zinc-500">Tool Orchestration</div>
             </div>
+          </div>
 
-            {/* Foundry */}
-            <div className="flex items-center space-x-2 text-zinc-400 hover:text-white transition group">
-              <FoundryLogo className="w-5 h-5 transition-transform group-hover:scale-110" />
-              <span className="text-xs font-mono font-medium">Foundry</span>
+          {/* Viem */}
+          <div className="bg-zinc-900/40 border border-zinc-800/80 hover:border-zinc-700 p-4 rounded-lg flex items-center space-x-3.5 transition group">
+            <img src="/brands/viem.png" alt="Viem" className="h-6 w-auto object-contain filter invert" />
+            <div>
+              <div className="text-white font-medium group-hover:text-zinc-300 transition">Viem</div>
+              <div className="text-[10px] text-zinc-500">Crypto Engine</div>
+            </div>
+          </div>
+
+          {/* x402 Protocol */}
+          <div className="bg-zinc-900/40 border border-zinc-800/80 hover:border-zinc-700 p-4 rounded-lg flex items-center space-x-3.5 transition group">
+            <img src="/brands/x402.png" alt="x402 Protocol" className="h-6 w-auto object-contain filter invert" />
+            <div>
+              <div className="text-white font-medium group-hover:text-zinc-300 transition">x402</div>
+              <div className="text-[10px] text-zinc-500">HTTP Payment RFC</div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Developer Integration Code Console with Full Syntax Highlighting */}
+      {/* Developer Integration Code Console with Tokyo Night Syntax Highlighting */}
       <section id="integration" className="max-w-7xl mx-auto px-6 py-20 border-b border-zinc-800/60 relative z-10">
         <div className="flex flex-col md:flex-row md:items-end justify-between mb-8">
           <div>
