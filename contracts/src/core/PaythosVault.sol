@@ -10,6 +10,11 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import "../interfaces/IPaythosTypes.sol";
 
+/**
+ * @title PaythosVault
+ * @notice The native agentic monetary clearinghouse for Arc L1 (Circle) and Base.
+ * Features: Native USDC gas settlement, Arc structured transaction memos, and EIP-712 cumulative vouchers.
+ */
 contract PaythosVault is IPaythosTypes, Ownable2Step, EIP712, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -23,11 +28,14 @@ contract PaythosVault is IPaythosTypes, Ownable2Step, EIP712, ReentrancyGuard {
     );
 
     address public treasury;
-    uint256 public protocolFeeBps;
+    uint256 public protocolFeeBps; // 150 = 1.50%
 
     mapping(address => SessionPolicy) public sessions;
     mapping(bytes32 => uint256) public settledAmount;
     mapping(address => WithdrawalRequest) public pendingWithdrawals;
+
+    // --- ARC & CIRCLE NATIVE EVENTS ---
+    event ArcMemoStamped(bytes32 indexed channelKey, bytes32 indexed arcMemoHash, uint256 timestamp);
 
     error InvalidAddress();
     error ZeroAmount();
@@ -55,13 +63,91 @@ contract PaythosVault is IPaythosTypes, Ownable2Step, EIP712, ReentrancyGuard {
         protocolFeeBps = _initialFeeBps;
     }
 
-    function settleVoucher(
+    // =========================================================================
+    // ARC-NATIVE CUMULATIVE VOUCHER SETTLEMENT
+    // =========================================================================
+
+    /**
+     * @notice Settles an off-chain cumulative voucher and stamps an Arc structured memo.
+     */
+    function settleVoucherWithMemo(
         PaymentVoucher calldata voucher,
+        bytes32 arcMemoHash,
         bytes calldata signature
-    ) external nonReentrant {
+    ) public nonReentrant {
         if (voucher.merchant == address(0) || voucher.agentKey == address(0)) revert InvalidAddress();
         if (block.timestamp > voucher.expiresAt) revert VoucherExpired();
 
+        // 1. Signature Verification in isolated stack frame
+        _verifyVoucherSignature(voucher, signature);
+
+        // 2. Policy & Grace Period
+        SessionPolicy storage policy = sessions[voucher.agentKey];
+        if (!policy.isActive) {
+            if (policy.revokedAt == 0 || block.timestamp > policy.revokedAt + REVOCATION_GRACE_PERIOD) {
+                revert SessionNotActive();
+            }
+        }
+        if (block.timestamp > policy.expiresAt) revert SessionExpired();
+
+        // 3. Monotonic Delta Calculation
+        bytes32 channelKey = getChannelKey(voucher.agentKey, voucher.merchant, voucher.sessionId, voucher.token);
+        uint256 previouslySettled = settledAmount[channelKey];
+        if (voucher.cumulativeAmount <= previouslySettled) {
+            revert NonMonotonicVoucher(voucher.cumulativeAmount, previouslySettled);
+        }
+
+        uint256 payoutDelta = voucher.cumulativeAmount - previouslySettled;
+
+        // 4. Daily Limit Rolling Window
+        if (block.timestamp >= policy.lastResetTimestamp + 1 days) {
+            policy.spentToday = 0;
+            policy.lastResetTimestamp = block.timestamp;
+        }
+
+        if (policy.spentToday + payoutDelta > policy.dailyLimit) {
+            uint256 remaining = policy.dailyLimit > policy.spentToday ? policy.dailyLimit - policy.spentToday : 0;
+            revert DailyLimitExceeded(payoutDelta, remaining);
+        }
+
+        policy.spentToday += payoutDelta;
+        settledAmount[channelKey] = voucher.cumulativeAmount;
+
+        // 5. Fee Splitting
+        uint256 fee = (protocolFeeBps > 0 && treasury != address(0)) 
+            ? (payoutDelta * protocolFeeBps) / BPS_DENOMINATOR 
+            : 0;
+        uint256 netMerchantPayout = payoutDelta - fee;
+
+        // 6. Events (CEI Pattern)
+        emit VoucherSettled(channelKey, voucher.merchant, voucher.agentKey, voucher.token, netMerchantPayout, fee);
+
+        if (arcMemoHash != bytes32(0)) {
+            emit ArcMemoStamped(channelKey, arcMemoHash, block.timestamp);
+        }
+
+        // 7. Token Transfers
+        IERC20(voucher.token).safeTransfer(voucher.merchant, netMerchantPayout);
+        if (fee > 0) {
+            IERC20(voucher.token).safeTransfer(treasury, fee);
+        }
+    }
+
+    function settleVoucher(
+        PaymentVoucher calldata voucher,
+        bytes calldata signature
+    ) external {
+        settleVoucherWithMemo(voucher, bytes32(0), signature);
+    }
+
+    // =========================================================================
+    // INTERNAL STACK ISOLATION HELPER
+    // =========================================================================
+
+    function _verifyVoucherSignature(
+        PaymentVoucher calldata voucher,
+        bytes calldata signature
+    ) internal view {
         bytes32 structHash = keccak256(
             abi.encode(
                 VOUCHER_TYPEHASH,
@@ -77,58 +163,18 @@ contract PaythosVault is IPaythosTypes, Ownable2Step, EIP712, ReentrancyGuard {
         bytes32 digest = _hashTypedDataV4(structHash);
         address recoveredSigner = ECDSA.recover(digest, signature);
         if (recoveredSigner != voucher.agentKey) revert InvalidSignature();
-
-        SessionPolicy storage policy = sessions[voucher.agentKey];
-        if (!policy.isActive) {
-            if (policy.revokedAt == 0 || block.timestamp > policy.revokedAt + REVOCATION_GRACE_PERIOD) {
-                revert SessionNotActive();
-            }
-        }
-        if (block.timestamp > policy.expiresAt) revert SessionExpired();
-
-        bytes32 channelKey = getChannelKey(voucher.agentKey, voucher.merchant, voucher.sessionId, voucher.token);
-        uint256 previouslySettled = settledAmount[channelKey];
-        if (voucher.cumulativeAmount <= previouslySettled) {
-            revert NonMonotonicVoucher(voucher.cumulativeAmount, previouslySettled);
-        }
-
-        uint256 payoutDelta = voucher.cumulativeAmount - previouslySettled;
-
-        if (block.timestamp >= policy.lastResetTimestamp + 1 days) {
-            policy.spentToday = 0;
-            policy.lastResetTimestamp = block.timestamp;
-        }
-
-        if (policy.spentToday + payoutDelta > policy.dailyLimit) {
-            uint256 remaining = policy.dailyLimit > policy.spentToday ? policy.dailyLimit - policy.spentToday : 0;
-            revert DailyLimitExceeded(payoutDelta, remaining);
-        }
-
-        // State update (Checks-Effects)
-        policy.spentToday += payoutDelta;
-        settledAmount[channelKey] = voucher.cumulativeAmount;
-
-        uint256 fee = 0;
-        if (protocolFeeBps > 0 && treasury != address(0)) {
-            fee = (payoutDelta * protocolFeeBps) / BPS_DENOMINATOR;
-        }
-        uint256 netMerchantPayout = payoutDelta - fee;
-
-        // Emit Event before external transfers (CEI Pattern)
-        emit VoucherSettled(channelKey, voucher.merchant, voucher.agentKey, voucher.token, netMerchantPayout, fee);
-
-        // Interactions
-        IERC20(voucher.token).safeTransfer(voucher.merchant, netMerchantPayout);
-        if (fee > 0) {
-            IERC20(voucher.token).safeTransfer(treasury, fee);
-        }
     }
 
-    function executePayment(
+    // =========================================================================
+    // DIRECT PAYMENT FALLBACK WITH ARC MEMO
+    // =========================================================================
+
+    function executePaymentWithMemo(
         address token,
         address recipient,
-        uint256 amount
-    ) external nonReentrant {
+        uint256 amount,
+        bytes32 arcMemoHash
+    ) public nonReentrant {
         if (amount == 0) revert ZeroAmount();
         if (recipient == address(0)) revert InvalidAddress();
 
@@ -146,24 +192,37 @@ contract PaythosVault is IPaythosTypes, Ownable2Step, EIP712, ReentrancyGuard {
             revert DailyLimitExceeded(amount, remaining);
         }
 
-        // State update
         policy.spentToday += amount;
 
-        uint256 fee = 0;
-        if (protocolFeeBps > 0 && treasury != address(0)) {
-            fee = (amount * protocolFeeBps) / BPS_DENOMINATOR;
-        }
+        uint256 fee = (protocolFeeBps > 0 && treasury != address(0))
+            ? (amount * protocolFeeBps) / BPS_DENOMINATOR
+            : 0;
         uint256 netAmount = amount - fee;
 
-        // Emit Event before external transfers
         emit DirectPaymentExecuted(msg.sender, token, recipient, netAmount, fee);
 
-        // Interactions
+        if (arcMemoHash != bytes32(0)) {
+            bytes32 channelKey = keccak256(abi.encodePacked(msg.sender, recipient, token));
+            emit ArcMemoStamped(channelKey, arcMemoHash, block.timestamp);
+        }
+
         IERC20(token).safeTransfer(recipient, netAmount);
         if (fee > 0) {
             IERC20(token).safeTransfer(treasury, fee);
         }
     }
+
+    function executePayment(
+        address token,
+        address recipient,
+        uint256 amount
+    ) external {
+        executePaymentWithMemo(token, recipient, amount, bytes32(0));
+    }
+
+    // =========================================================================
+    // OWNER CONTROLS (SESSION & TIMELOCKED WITHDRAWALS)
+    // =========================================================================
 
     function createSession(
         address agentKey,
