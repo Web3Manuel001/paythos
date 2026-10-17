@@ -88,7 +88,7 @@ export default function PaythosInterface() {
   const [copiedContract, setCopiedContract] = useState<boolean>(false);
   const [apiCalls, setApiCalls] = useState<number>(1000);
 
-  const CONTRACT_ADDRESS = '0x6E0837c166c01710dC86f2E25DAE2fFD574343D9';
+  const CONTRACT_ADDRESS = '0xFb57ceAEF685B73Dc0270f806545e195393Cc277';
 
   const handleCopyCode = () => {
     navigator.clipboard.writeText(CODE_RAW[activeCodeTab]);
@@ -131,7 +131,7 @@ export default function PaythosInterface() {
         </div>
         <div className="hidden sm:flex items-center space-x-4 min-w-max text-[11px]">
           <a
-            href="https://sepolia.basescan.org/address/0x6E0837c166c01710dC86f2E25DAE2fFD574343D9"
+            href="https://sepolia.basescan.org/address/0xFb57ceAEF685B73Dc0270f806545e195393Cc277"
             target="_blank"
             rel="noreferrer"
             className="text-zinc-400 hover:text-white transition flex items-center gap-1"
@@ -612,7 +612,7 @@ export default function PaythosInterface() {
           </div>
           <div className="flex items-center space-x-6">
             <a
-              href="https://sepolia.basescan.org/address/0x6E0837c166c01710dC86f2E25DAE2fFD574343D9"
+              href="https://sepolia.basescan.org/address/0xFb57ceAEF685B73Dc0270f806545e195393Cc277"
               target="_blank"
               rel="noreferrer"
               className="hover:text-white transition"
