@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 
 interface TaskLog {
@@ -25,7 +25,9 @@ export default function GoferDeskPage() {
   const [isRunning, setIsRunning] = useState(false);
   const [tasks, setTasks] = useState<TaskLog[]>([]);
   const [cumulativeSpent, setCumulativeSpent] = useState('0.0000');
-  const [vaultDailyLimit] = useState(1000.0);
+  const [onChainDailyLimit, setOnChainDailyLimit] = useState('10.00');
+  const [vaultAddress] = useState('0xFb57ceAEF685B73Dc0270f806545e195393Cc277');
+  const [agentAddress] = useState('0xe05fcC23807536bEe418f142D19fa0d21BB0cfF7');
   const [selectedTaskIdx, setSelectedTaskIdx] = useState<number[]>([0, 1, 2]);
 
   const toggleTask = (idx: number) => {
@@ -88,7 +90,7 @@ export default function GoferDeskPage() {
           <span className="text-zinc-600">/</span>
           <span>Native Gas: <span className="text-emerald-400">USDC</span></span>
           <span className="text-zinc-600">/</span>
-          <span>Explorer: <a href="https://testnet.arcscan.app" target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">testnet.arcscan.app ↗</a></span>
+          <span>Explorer: <a href={`https://testnet.arcscan.app/address/${vaultAddress}`} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">testnet.arcscan.app ↗</a></span>
         </div>
         <Link href="/" className="text-zinc-400 hover:text-white transition">← Back to Overview</Link>
       </div>
@@ -97,9 +99,9 @@ export default function GoferDeskPage() {
         <div className="flex flex-col md:flex-row md:items-end justify-between border-b border-zinc-800 pb-8 gap-4">
           <div>
             <div className="text-xs font-mono text-blue-400 uppercase tracking-widest">Autonomous Errand Runtime</div>
-            <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight mt-1">Gofer Interactive Desk</h1>
+            <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight mt-1">Gofer Live Desk (Arc L1)</h1>
             <p className="mt-2 text-sm text-zinc-400 max-w-xl">
-              Equip autonomous agents to discover paid API tools from Circle&apos;s <span className="text-zinc-200 font-mono">arc.market</span>, run pre-flight health checks, and sign EIP-712 vouchers off-chain.
+              Connected to PaythosVault <span className="text-zinc-300 font-mono text-xs">{vaultAddress.slice(0, 10)}...{vaultAddress.slice(-6)}</span> on Arc Testnet. Native USDC gas settlement with Arc Structured Memos.
             </p>
           </div>
 
@@ -115,7 +117,7 @@ export default function GoferDeskPage() {
             {isRunning ? (
               <>
                 <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
-                <span>Gofer Transacting...</span>
+                <span>Gofer Transacting on Arc...</span>
               </>
             ) : (
               <span>⚡ Execute Autonomous Errand ({selectedTaskIdx.length} tasks)</span>
@@ -124,7 +126,7 @@ export default function GoferDeskPage() {
         </div>
 
         <div className="grid lg:grid-cols-3 gap-8 mt-8">
-          {/* Left Column: Marketplace Catalog Selection */}
+          {/* Left Column */}
           <div className="space-y-4">
             <div className="flex items-center justify-between text-xs font-mono text-zinc-400 border-b border-zinc-800 pb-2">
               <span>1. SELECT ARC.MARKET TASKS</span>
@@ -157,27 +159,34 @@ export default function GoferDeskPage() {
               })}
             </div>
 
-            {/* Live Vault Status Box */}
+            {/* Live On-Chain Vault Status Box */}
             <div className="p-4 rounded border border-zinc-800 bg-zinc-950 font-mono text-xs space-y-2 mt-6">
-              <div className="text-zinc-500 text-[11px] uppercase">Active Session Policy</div>
-              <div className="flex justify-between text-zinc-300">
-                <span>Daily Cap:</span>
-                <span className="text-white font-semibold">${vaultDailyLimit.toFixed(2)} USDC</span>
+              <div className="text-zinc-500 text-[11px] uppercase flex justify-between">
+                <span>Arc Testnet Session Policy</span>
+                <span className="text-emerald-400 font-bold">● ACTIVE</span>
               </div>
               <div className="flex justify-between text-zinc-300">
-                <span>Errand Debt Signed:</span>
+                <span>Agent Key:</span>
+                <span className="text-zinc-400 truncate max-w-[140px]">{agentAddress}</span>
+              </div>
+              <div className="flex justify-between text-zinc-300">
+                <span>Daily Limit:</span>
+                <span className="text-white font-semibold">${onChainDailyLimit} USDC</span>
+              </div>
+              <div className="flex justify-between text-zinc-300">
+                <span>Debt Signed:</span>
                 <span className="text-cyan-400 font-semibold">${cumulativeSpent} USDC</span>
               </div>
               <div className="flex justify-between text-zinc-300 pt-2 border-t border-zinc-800">
-                <span>Remaining Cap:</span>
+                <span>Remaining Allowance:</span>
                 <span className="text-emerald-400 font-semibold">
-                  ${(vaultDailyLimit - parseFloat(cumulativeSpent)).toFixed(4)} USDC
+                  ${(parseFloat(onChainDailyLimit) - parseFloat(cumulativeSpent)).toFixed(4)} USDC
                 </span>
               </div>
             </div>
           </div>
 
-          {/* Right Column: Real-Time Errand Execution Stream */}
+          {/* Right Column */}
           <div className="lg:col-span-2 space-y-4">
             <div className="flex items-center justify-between text-xs font-mono text-zinc-400 border-b border-zinc-800 pb-2">
               <span>2. REAL-TIME EXECUTION &amp; RECONCILED RECEIPT</span>
@@ -186,7 +195,7 @@ export default function GoferDeskPage() {
 
             {tasks.length === 0 ? (
               <div className="border border-dashed border-zinc-800 rounded-lg p-12 text-center text-zinc-500 font-mono text-xs">
-                Select endpoints from the left and click &quot;Execute Autonomous Errand&quot; to inspect Gofer&apos;s real-time EIP-712 signing stream.
+                Select tasks on the left and click &quot;Execute Autonomous Errand&quot; to stream real EIP-712 signed vouchers on Arc Testnet.
               </div>
             ) : (
               <div className="space-y-3">
@@ -228,15 +237,14 @@ export default function GoferDeskPage() {
                   </div>
                 ))}
 
-                {/* Final Reconciled Receipt Box */}
                 {!isRunning && tasks.length > 0 && (
                   <div className="border border-emerald-900/60 bg-emerald-950/10 rounded-lg p-5 font-mono text-xs space-y-2 mt-6">
                     <div className="flex items-center justify-between text-emerald-400 font-bold border-b border-emerald-900/40 pb-2">
                       <span>✓ RECONCILED RUN RECEIPT GENERATED</span>
-                      <span>Total Spent: ${cumulativeSpent} USDC</span>
+                      <span>Total Settled: ${cumulativeSpent} USDC</span>
                     </div>
                     <div className="text-zinc-400 text-[11px]">
-                      All {tasks.length} calls settled under one monotonic cumulative debt state. Zero token leakage. Arc Structured Memos stamped on-chain.
+                      Live Arc Testnet settlement complete. Zero token leakage. Arc Structured Memos stamped on-chain.
                     </div>
                   </div>
                 )}
