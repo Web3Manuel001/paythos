@@ -6,19 +6,23 @@ import {
 } from '../types';
 import { TokenBucketRateLimiter } from './rate-limiter/tokenBucket';
 import { VoucherAccumulator } from './accumulator/voucherStore';
+import { PaythosVaultClient } from '../client/vaultClient';
 
 export interface PaywallConfig {
   merchantAddress: Address;
   vaultAddress: Address;
-  tokenAddress: Address;
+  tokenAddress: Address; // Canonical USDC
   chainId: number;
   pricePerCall: bigint;
   accumulator: VoucherAccumulator;
+  vaultClient?: PaythosVaultClient;
   rateLimiter?: TokenBucketRateLimiter;
 }
 
 export function createX402Paywall(config: PaywallConfig) {
   const rateLimiter = config.rateLimiter || new TokenBucketRateLimiter(20, 5);
+  // In-memory cache of verified active agent sessions (valid for 5 mins)
+  const verifiedAgentSessions: Map<string, number> = new Map();
 
   return async function handlePaywall(req: any, res: any, next: () => void) {
     const rawHeader = req.headers['x-paythos-voucher'] || req.headers['x-payment-voucher'];
@@ -26,7 +30,7 @@ export function createX402Paywall(config: PaywallConfig) {
     if (!rawHeader) {
       res.writeHead(402, {
         'Content-Type': 'application/json',
-        'X-Paythos-Version': '2.0',
+        'X-Paythos-Version': '2.1',
         'X-Paythos-Price': config.pricePerCall.toString(),
         'X-Paythos-Token': config.tokenAddress,
         'X-Paythos-Merchant': config.merchantAddress,
@@ -35,7 +39,7 @@ export function createX402Paywall(config: PaywallConfig) {
       return res.end(
         JSON.stringify({
           error: 'Payment Required',
-          protocol: 'x402-v2',
+          protocol: 'x402-v2.1',
           pricePerCall: config.pricePerCall.toString(),
           token: config.tokenAddress,
           merchant: config.merchantAddress,
@@ -70,11 +74,28 @@ export function createX402Paywall(config: PaywallConfig) {
 
     const { voucher, signature } = signedVoucher;
 
+    // 1. Strict Bound Field Checks (Prevents farming free calls to wrong merchant/token)
+    if (voucher.merchant.toLowerCase() !== config.merchantAddress.toLowerCase()) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Voucher merchant mismatch' }));
+    }
+    if (voucher.token.toLowerCase() !== config.tokenAddress.toLowerCase()) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Voucher token mismatch' }));
+    }
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    if (now > voucher.expiresAt) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Voucher expired' }));
+    }
+
+    // 2. Rate Limiting Check (HTTP 429)
     if (!rateLimiter.allowRequest(voucher.agentKey)) {
       res.writeHead(429, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'Rate limit exceeded. Too many requests.' }));
     }
 
+    // 3. EIP-712 Cryptographic Signature Verification
     const domain = getEIP712Domain(config.vaultAddress, config.chainId);
     const isValid = await verifyTypedData({
       address: voucher.agentKey,
@@ -90,6 +111,26 @@ export function createX402Paywall(config: PaywallConfig) {
       return res.end(JSON.stringify({ error: 'Invalid EIP-712 voucher signature' }));
     }
 
+    // 4. On-Chain Session Preflight Cache Check
+    const agentLower = voucher.agentKey.toLowerCase();
+    const cachedTime = verifiedAgentSessions.get(agentLower) || 0;
+    const nowMs = Date.now();
+
+    if (config.vaultClient && nowMs - cachedTime > 300_000) {
+      // Refresh cache every 5 minutes from on-chain RPC
+      try {
+        const session = await config.vaultClient.getSession(voucher.agentKey);
+        if (!session.isActive || now > session.expiresAt) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'Agent session is inactive or revoked on-chain' }));
+        }
+        verifiedAgentSessions.set(agentLower, nowMs);
+      } catch (err) {
+        console.warn('[Paythos Paywall] Warning: Could not verify on-chain session state:', err);
+      }
+    }
+
+    // 5. Monotonic Delta Check
     const existing = config.accumulator.getChannel(voucher.agentKey, voucher.merchant, voucher.sessionId);
     const lastAmount = existing ? existing.latestVoucher.voucher.cumulativeAmount : 0n;
 
@@ -104,7 +145,10 @@ export function createX402Paywall(config: PaywallConfig) {
       );
     }
 
+    // 6. Record voucher in accumulator
     await config.accumulator.recordVoucher(signedVoucher);
+
+    // Pass through to protected handler
     next();
   };
 }

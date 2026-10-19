@@ -11,30 +11,30 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "../interfaces/IPaythosTypes.sol";
 
 /**
- * @title PaythosVault
- * @notice The native agentic monetary clearinghouse for Arc L1 (Circle) and Base.
- * Features: Native USDC gas settlement, Arc structured transaction memos, and EIP-712 cumulative vouchers.
+ * @title PaythosVault (Hardened v2.1)
+ * @notice Cryptographic clearinghouse and non-custodial session vault for autonomous agents.
+ * Fixes: Instant revocation, monotonic nonces, token binding, and CEI event ordering.
  */
 contract PaythosVault is IPaythosTypes, Ownable2Step, EIP712, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     uint256 public constant BPS_DENOMINATOR = 10_000;
-    uint256 public constant MAX_FEE_BPS = 500;
+    uint256 public constant MAX_FEE_BPS = 500; // 5.00% max cap
     uint256 public constant WITHDRAWAL_TIMELOCK = 6 hours;
-    uint256 public constant REVOCATION_GRACE_PERIOD = 1 hours;
 
     bytes32 public constant VOUCHER_TYPEHASH = keccak256(
         "PaymentVoucher(address token,address merchant,address agentKey,uint256 sessionId,uint256 cumulativeAmount,uint256 expiresAt,uint256 nonce)"
     );
 
+    address public immutable settlementToken; // Pinned canonical settlement asset (USDC)
     address public treasury;
     uint256 public protocolFeeBps; // 150 = 1.50%
 
     mapping(address => SessionPolicy) public sessions;
     mapping(bytes32 => uint256) public settledAmount;
+    mapping(bytes32 => uint256) public lastNonce; // Monotonic nonce protection
     mapping(address => WithdrawalRequest) public pendingWithdrawals;
 
-    // --- ARC & CIRCLE NATIVE EVENTS ---
     event ArcMemoStamped(bytes32 indexed channelKey, bytes32 indexed arcMemoHash, uint256 timestamp);
 
     error InvalidAddress();
@@ -46,52 +46,52 @@ contract PaythosVault is IPaythosTypes, Ownable2Step, EIP712, ReentrancyGuard {
     error InvalidSignature();
     error VoucherExpired();
     error NonMonotonicVoucher(uint256 proposed, uint256 current);
+    error InvalidNonce(uint256 proposed, uint256 current);
+    error UnsupportedToken(address provided, address expected);
     error WithdrawalLocked(uint256 currentTimestamp, uint256 unlockTimestamp);
     error NoPendingWithdrawal();
 
     constructor(
+        address _settlementToken,
         address _treasury,
         uint256 _initialFeeBps
     ) 
         Ownable(msg.sender) 
         EIP712("PaythosVault", "1") 
     {
-        if (_treasury == address(0)) revert InvalidAddress();
+        if (_settlementToken == address(0) || _treasury == address(0)) revert InvalidAddress();
         if (_initialFeeBps > MAX_FEE_BPS) revert FeeTooHigh();
 
+        settlementToken = _settlementToken;
         treasury = _treasury;
         protocolFeeBps = _initialFeeBps;
     }
 
-    // =========================================================================
-    // ARC-NATIVE CUMULATIVE VOUCHER SETTLEMENT
-    // =========================================================================
-
-    /**
-     * @notice Settles an off-chain cumulative voucher and stamps an Arc structured memo.
-     */
     function settleVoucherWithMemo(
         PaymentVoucher calldata voucher,
         bytes32 arcMemoHash,
         bytes calldata signature
     ) public nonReentrant {
         if (voucher.merchant == address(0) || voucher.agentKey == address(0)) revert InvalidAddress();
+        if (voucher.token != settlementToken) revert UnsupportedToken(voucher.token, settlementToken);
         if (block.timestamp > voucher.expiresAt) revert VoucherExpired();
 
-        // 1. Signature Verification in isolated stack frame
+        // 1. Signature Verification
         _verifyVoucherSignature(voucher, signature);
 
-        // 2. Policy & Grace Period
+        // 2. Instant Revocation Enforcement (No grace window for compromised keys)
         SessionPolicy storage policy = sessions[voucher.agentKey];
-        if (!policy.isActive) {
-            if (policy.revokedAt == 0 || block.timestamp > policy.revokedAt + REVOCATION_GRACE_PERIOD) {
-                revert SessionNotActive();
-            }
-        }
+        if (!policy.isActive) revert SessionNotActive();
         if (block.timestamp > policy.expiresAt) revert SessionExpired();
 
-        // 3. Monotonic Delta Calculation
+        // 3. Monotonic Channel Accounting & Nonce Enforcement
         bytes32 channelKey = getChannelKey(voucher.agentKey, voucher.merchant, voucher.sessionId, voucher.token);
+        
+        if (voucher.nonce <= lastNonce[channelKey]) {
+            revert InvalidNonce(voucher.nonce, lastNonce[channelKey]);
+        }
+        lastNonce[channelKey] = voucher.nonce;
+
         uint256 previouslySettled = settledAmount[channelKey];
         if (voucher.cumulativeAmount <= previouslySettled) {
             revert NonMonotonicVoucher(voucher.cumulativeAmount, previouslySettled);
@@ -99,7 +99,7 @@ contract PaythosVault is IPaythosTypes, Ownable2Step, EIP712, ReentrancyGuard {
 
         uint256 payoutDelta = voucher.cumulativeAmount - previouslySettled;
 
-        // 4. Daily Limit Rolling Window
+        // 4. Daily Limit Window (Rolling 24h)
         if (block.timestamp >= policy.lastResetTimestamp + 1 days) {
             policy.spentToday = 0;
             policy.lastResetTimestamp = block.timestamp;
@@ -110,44 +110,33 @@ contract PaythosVault is IPaythosTypes, Ownable2Step, EIP712, ReentrancyGuard {
             revert DailyLimitExceeded(payoutDelta, remaining);
         }
 
+        // 5. State Updates (Checks-Effects)
         policy.spentToday += payoutDelta;
         settledAmount[channelKey] = voucher.cumulativeAmount;
 
-        // 5. Fee Splitting
         uint256 fee = (protocolFeeBps > 0 && treasury != address(0)) 
             ? (payoutDelta * protocolFeeBps) / BPS_DENOMINATOR 
             : 0;
         uint256 netMerchantPayout = payoutDelta - fee;
 
-        // 6. Events (CEI Pattern)
         emit VoucherSettled(channelKey, voucher.merchant, voucher.agentKey, voucher.token, netMerchantPayout, fee);
 
         if (arcMemoHash != bytes32(0)) {
             emit ArcMemoStamped(channelKey, arcMemoHash, block.timestamp);
         }
 
-        // 7. Token Transfers
+        // 6. External Interactions
         IERC20(voucher.token).safeTransfer(voucher.merchant, netMerchantPayout);
         if (fee > 0) {
             IERC20(voucher.token).safeTransfer(treasury, fee);
         }
     }
 
-    function settleVoucher(
-        PaymentVoucher calldata voucher,
-        bytes calldata signature
-    ) external {
+    function settleVoucher(PaymentVoucher calldata voucher, bytes calldata signature) external {
         settleVoucherWithMemo(voucher, bytes32(0), signature);
     }
 
-    // =========================================================================
-    // INTERNAL STACK ISOLATION HELPER
-    // =========================================================================
-
-    function _verifyVoucherSignature(
-        PaymentVoucher calldata voucher,
-        bytes calldata signature
-    ) internal view {
+    function _verifyVoucherSignature(PaymentVoucher calldata voucher, bytes calldata signature) internal view {
         bytes32 structHash = keccak256(
             abi.encode(
                 VOUCHER_TYPEHASH,
@@ -165,10 +154,6 @@ contract PaythosVault is IPaythosTypes, Ownable2Step, EIP712, ReentrancyGuard {
         if (recoveredSigner != voucher.agentKey) revert InvalidSignature();
     }
 
-    // =========================================================================
-    // DIRECT PAYMENT FALLBACK WITH ARC MEMO
-    // =========================================================================
-
     function executePaymentWithMemo(
         address token,
         address recipient,
@@ -177,6 +162,7 @@ contract PaythosVault is IPaythosTypes, Ownable2Step, EIP712, ReentrancyGuard {
     ) public nonReentrant {
         if (amount == 0) revert ZeroAmount();
         if (recipient == address(0)) revert InvalidAddress();
+        if (token != settlementToken) revert UnsupportedToken(token, settlementToken);
 
         SessionPolicy storage policy = sessions[msg.sender];
         if (!policy.isActive) revert SessionNotActive();
@@ -212,17 +198,9 @@ contract PaythosVault is IPaythosTypes, Ownable2Step, EIP712, ReentrancyGuard {
         }
     }
 
-    function executePayment(
-        address token,
-        address recipient,
-        uint256 amount
-    ) external {
+    function executePayment(address token, address recipient, uint256 amount) external {
         executePaymentWithMemo(token, recipient, amount, bytes32(0));
     }
-
-    // =========================================================================
-    // OWNER CONTROLS (SESSION & TIMELOCKED WITHDRAWALS)
-    // =========================================================================
 
     function createSession(
         address agentKey,
@@ -248,19 +226,13 @@ contract PaythosVault is IPaythosTypes, Ownable2Step, EIP712, ReentrancyGuard {
         SessionPolicy storage policy = sessions[agentKey];
         policy.isActive = false;
         policy.revokedAt = block.timestamp;
-
-        emit SessionRevoked(agentKey, block.timestamp + REVOCATION_GRACE_PERIOD);
+        emit SessionRevoked(agentKey, block.timestamp);
     }
 
     function queueWithdrawal(address token, uint256 amount) external onlyOwner {
         if (amount == 0) revert ZeroAmount();
-        
         uint256 unlock = block.timestamp + WITHDRAWAL_TIMELOCK;
-        pendingWithdrawals[token] = WithdrawalRequest({
-            amount: amount,
-            unlockTimestamp: unlock
-        });
-
+        pendingWithdrawals[token] = WithdrawalRequest({ amount: amount, unlockTimestamp: unlock });
         emit WithdrawalQueued(token, amount, unlock);
     }
 
@@ -275,7 +247,6 @@ contract PaythosVault is IPaythosTypes, Ownable2Step, EIP712, ReentrancyGuard {
 
         delete pendingWithdrawals[token];
         emit WithdrawalExecuted(token, to, request.amount);
-
         IERC20(token).safeTransfer(to, request.amount);
     }
 
@@ -287,19 +258,12 @@ contract PaythosVault is IPaythosTypes, Ownable2Step, EIP712, ReentrancyGuard {
     function setFeeConfig(address _treasury, uint256 _feeBps) external onlyOwner {
         if (_treasury == address(0)) revert InvalidAddress();
         if (_feeBps > MAX_FEE_BPS) revert FeeTooHigh();
-
         treasury = _treasury;
         protocolFeeBps = _feeBps;
-
         emit FeeConfigUpdated(_treasury, _feeBps);
     }
 
-    function getChannelKey(
-        address agentKey,
-        address merchant,
-        uint256 sessionId,
-        address token
-    ) public pure returns (bytes32) {
+    function getChannelKey(address agentKey, address merchant, uint256 sessionId, address token) public pure returns (bytes32) {
         return keccak256(abi.encodePacked(agentKey, merchant, sessionId, token));
     }
 

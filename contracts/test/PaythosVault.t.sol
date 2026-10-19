@@ -13,9 +13,17 @@ contract MockUSDC is ERC20 {
     }
 }
 
+contract MockDAI is ERC20 {
+    constructor() ERC20("Dai Stablecoin", "DAI") {}
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+}
+
 contract PaythosVaultTest is Test, IPaythosTypes {
     PaythosVault public vault;
     MockUSDC public usdc;
+    MockDAI public unapprovedToken;
 
     address public owner = address(0x1);
     address public treasury = address(0x2);
@@ -31,14 +39,13 @@ contract PaythosVaultTest is Test, IPaythosTypes {
         agentKey = vm.addr(agentPrivateKey);
 
         vm.startPrank(owner);
-        vault = new PaythosVault(treasury, INITIAL_FEE_BPS);
         usdc = new MockUSDC();
+        unapprovedToken = new MockDAI();
 
-        // Authorize agent session for 7 days
+        vault = new PaythosVault(address(usdc), treasury, INITIAL_FEE_BPS);
         vault.createSession(agentKey, DAILY_LIMIT, 7 days);
         vm.stopPrank();
 
-        // Fund the vault with 50,000 USDC
         usdc.mint(address(vault), 50_000 * 1e6);
     }
 
@@ -71,6 +78,7 @@ contract PaythosVaultTest is Test, IPaythosTypes {
         assertEq(vault.owner(), owner);
         assertEq(vault.treasury(), treasury);
         assertEq(vault.protocolFeeBps(), INITIAL_FEE_BPS);
+        assertEq(vault.settlementToken(), address(usdc));
     }
 
     function test_SettleVoucher_CumulativeDeltasAndFee() public {
@@ -120,10 +128,92 @@ contract PaythosVaultTest is Test, IPaythosTypes {
 
         PaymentVoucher memory v2 = v1;
         v2.cumulativeAmount = 40 * 1e6;
+        v2.nonce = 2;
         bytes memory sig2 = _signVoucher(v2, agentPrivateKey);
 
         vm.expectRevert();
         vault.settleVoucher(v2, sig2);
+    }
+
+    function test_Revert_InvalidNonce() public {
+        PaymentVoucher memory v1 = PaymentVoucher({
+            token: address(usdc),
+            merchant: merchant,
+            agentKey: agentKey,
+            sessionId: 1,
+            cumulativeAmount: 10 * 1e6,
+            expiresAt: block.timestamp + 1 hours,
+            nonce: 5
+        });
+        bytes memory sig1 = _signVoucher(v1, agentPrivateKey);
+        vault.settleVoucher(v1, sig1);
+
+        PaymentVoucher memory v2 = PaymentVoucher({
+            token: address(usdc),
+            merchant: merchant,
+            agentKey: agentKey,
+            sessionId: 1,
+            cumulativeAmount: 20 * 1e6,
+            expiresAt: block.timestamp + 1 hours,
+            nonce: 5 // Replaying identical nonce!
+        });
+        // 1. Precompute signature BEFORE expectRevert
+        bytes memory sig2 = _signVoucher(v2, agentPrivateKey);
+
+        // 2. Expect revert on settleVoucher
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PaythosVault.InvalidNonce.selector,
+                5,
+                5
+            )
+        );
+        vault.settleVoucher(v2, sig2);
+    }
+
+    function test_Revert_UnsupportedToken() public {
+        PaymentVoucher memory v = PaymentVoucher({
+            token: address(unapprovedToken),
+            merchant: merchant,
+            agentKey: agentKey,
+            sessionId: 1,
+            cumulativeAmount: 10 * 1e6,
+            expiresAt: block.timestamp + 1 hours,
+            nonce: 1
+        });
+        // 1. Precompute signature BEFORE expectRevert
+        bytes memory sig = _signVoucher(v, agentPrivateKey);
+
+        // 2. Expect revert on settleVoucher
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PaythosVault.UnsupportedToken.selector,
+                address(unapprovedToken),
+                address(usdc)
+            )
+        );
+        vault.settleVoucher(v, sig);
+    }
+
+    function test_InstantRevocation() public {
+        vm.prank(owner);
+        vault.revokeSession(agentKey);
+
+        PaymentVoucher memory v = PaymentVoucher({
+            token: address(usdc),
+            merchant: merchant,
+            agentKey: agentKey,
+            sessionId: 1,
+            cumulativeAmount: 10 * 1e6,
+            expiresAt: block.timestamp + 1 hours,
+            nonce: 1
+        });
+        // 1. Precompute signature BEFORE expectRevert
+        bytes memory sig = _signVoucher(v, agentPrivateKey);
+
+        // 2. Expect revert on settleVoucher
+        vm.expectRevert(PaythosVault.SessionNotActive.selector);
+        vault.settleVoucher(v, sig);
     }
 
     function test_Revert_InvalidSignature() public {
@@ -186,7 +276,6 @@ contract PaythosVaultTest is Test, IPaythosTypes {
         uint256 d2 = uint256(delta2);
         uint256 total = d1 + d2;
 
-        // Voucher 1
         PaymentVoucher memory v1 = PaymentVoucher({
             token: address(usdc),
             merchant: merchant,
@@ -198,7 +287,6 @@ contract PaythosVaultTest is Test, IPaythosTypes {
         });
         vault.settleVoucher(v1, _signVoucher(v1, agentPrivateKey));
 
-        // Voucher 2
         PaymentVoucher memory v2 = PaymentVoucher({
             token: address(usdc),
             merchant: merchant,
@@ -210,7 +298,6 @@ contract PaythosVaultTest is Test, IPaythosTypes {
         });
         vault.settleVoucher(v2, _signVoucher(v2, agentPrivateKey));
 
-        // Exact delta fees per transaction
         uint256 fee1 = (d1 * INITIAL_FEE_BPS) / 10_000;
         uint256 fee2 = (d2 * INITIAL_FEE_BPS) / 10_000;
         uint256 totalFee = fee1 + fee2;
@@ -218,8 +305,6 @@ contract PaythosVaultTest is Test, IPaythosTypes {
 
         assertEq(usdc.balanceOf(treasury), totalFee);
         assertEq(usdc.balanceOf(merchant), totalMerchant);
-
-        // Invariant: Conservation of Value (Zero Leakage)
         assertEq(usdc.balanceOf(treasury) + usdc.balanceOf(merchant), total);
     }
 }
