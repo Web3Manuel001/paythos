@@ -16,18 +16,20 @@ Paythos is an **enterprise policy and spend-governance layer** designed to sit d
 * **Cryptographic Session Scoping:** Authorize ephemeral agent session keys with strict on-chain daily spend limits and TTL expiries.
 * **Instant Prompt-Injection Killswitch:** Administrative revocation terminates rogue agents immediately on-chain with zero settlement delay.
 * **Monotonic Nonce Sequencing:** On-chain enforcement preventing voucher replay or stale-state extraction.
-* **Dual-Trigger Auto-Flushing:** In-memory accumulators flush vouchers to Arc L1 when claims reach $5.00 OR when voucher age reaches 20 minutes (preventing 1-hour expiry loss).
+* **Dual-Trigger Auto-Flushing:** In-memory accumulators flush vouchers to Arc L1 when claims reach $5.00 OR when voucher age reaches 20 minutes (with background `.unref()` timer sweep preventing 1-hour expiry loss).
 * **Arc Structured Transaction Memos:** Batch settlements stamp Merkleized audit hashes directly into Arc transaction memos for institutional compliance.
 
 ---
 
-## 📜 Verified Deployments
+## 📜 Verified On-Chain Deployments & Proofs
 
-| Component | Network | Address / Reference | Explorer |
+| Component | Network | Address / Hash | Explorer Proof |
 | :--- | :--- | :--- | :--- |
-| **PaythosVault Core** | Arc Testnet (`5042002`) | `0xFb57ceAEF685B73Dc0270f806545e195393Cc277` | [ArcScan](https://testnet.arcscan.app/address/0xFb57ceAEF685B73Dc0270f806545e195393Cc277) |
-| **Settlement Asset** | Arc Native USDC | `0x3600000000000000000000000000000000000000` | [Arc Docs](https://docs.arc.io/arc/references/contract-addresses) |
-| **Base Liquidity Spoke** | Base Sepolia (`84532`) | `0x6E0837c166c01710dC86f2E25DAE2fFD574343D9` | [Basescan](https://sepolia.basescan.org/address/0x6E0837c166c01710dC86f2E25DAE2fFD574343D9) |
+| **Hardened Vault Core** | Arc Testnet (`5042002`) | `0xa9d5525BE440831c64695d30c915DF303E0151EF` | [ArcScan Contract](https://testnet.arcscan.app/address/0xa9d5525BE440831c64695d30c915DF303E0151EF) |
+| **Verified Settlement Tx** | Arc Testnet (Block #68409300) | `0xf7113e7d05dad2ae241439afd16c3dc8f093cbe415cf9c99b87134014bad193d` | [ArcScan Settlement Proof](https://testnet.arcscan.app/tx/0xf7113e7d05dad2ae241439afd16c3dc8f093cbe415cf9c99b87134014bad193d) |
+| **Arc Structured Memo** | Hex Digest | `0xbf166072535e6c278f4c7792e4c38c76ef01cdd0bb24e9f0d856168ca83be5a5` | Stamped On-Chain |
+| **Settlement Asset** | Arc Native USDC | `0x3600000000000000000000000000000000000000` | [Arc Official Registry](https://docs.arc.io/arc/references/contract-addresses) |
+| **Base Liquidity Spoke** | Base Sepolia (`84532`) | `0x6E0837c166c01710dC86f2E25DAE2fFD574343D9` | [Basescan Explorer](https://sepolia.basescan.org/address/0x6E0837c166c01710dC86f2E25DAE2fFD574343D9) |
 
 ---
 
@@ -37,7 +39,7 @@ Paythos is an **enterprise policy and spend-governance layer** designed to sit d
 ```typescript
 import { AgentVoucherSigner } from './sdk/src/signer/voucherSigner';
 
-const signer = new AgentVoucherSigner(process.env.AGENT_SESSION_KEY, VAULT_ADDRESS, 5042002);
+const signer = new AgentVoucherSigner(process.env.AGENT_SESSION_KEY, '0xa9d5525BE440831c64695d30c915DF303E0151EF', 5042002);
 const payment = await signer.signCumulativePayment(
   merchantAddress, 
   '0x3600000000000000000000000000000000000000', 
@@ -47,17 +49,17 @@ const payment = await signer.signCumulativePayment(
 await fetch('https://api.provider.com/data', {
   headers: { 'X-Paythos-Voucher': payment.headerPayload }
 });
-2. Merchant x402 Middleware (with Dual-Trigger Accumulator)
+2. Merchant x402 Middleware (Dual-Trigger with Timer Flush)
 code
 TypeScript
 import { createX402Paywall, VoucherAccumulator } from './sdk/src/middleware/paywall';
 import { PaythosVaultClient } from './sdk/src/client/vaultClient';
 
-const vaultClient = new PaythosVaultClient(VAULT_ADDRESS, 'https://rpc.testnet.arc.io', merchantWallet);
+const vaultClient = new PaythosVaultClient('0xa9d5525BE440831c64695d30c915DF303E0151EF', 'https://rpc.testnet.arc.io', merchantWallet);
 
 app.use('/api/data', createX402Paywall({
   merchantAddress: '0xYourMerchant',
-  vaultAddress: '0xFb57ceAEF685B73Dc0270f806545e195393Cc277',
+  vaultAddress: '0xa9d5525BE440831c64695d30c915DF303E0151EF',
   tokenAddress: '0x3600000000000000000000000000000000000000',
   chainId: 5042002,
   pricePerCall: 2000n,

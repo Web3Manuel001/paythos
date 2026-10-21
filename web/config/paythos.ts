@@ -1,5 +1,4 @@
 export const PAYTHOS_CONFIG = {
-  // --- PRIMARY L1: ARC TESTNET ---
   primary: {
     network: 'Arc Testnet',
     chainId: 5042002,
@@ -7,11 +6,12 @@ export const PAYTHOS_CONFIG = {
     rpcUrl: 'https://rpc.testnet.arc.io',
     blockExplorer: 'https://testnet.arcscan.app',
     gasAsset: 'USDC (Native)',
-    vaultAddress: '0xFb57ceAEF685B73Dc0270f806545e195393Cc277' as `0x${string}`,
+    vaultAddress: '0xa9d5525BE440831c64695d30c915DF303E0151EF' as `0x${string}`,
     nativeUsdcAddress: '0x3600000000000000000000000000000000000000' as `0x${string}`,
-    protocolFeeBps: 0, // 0% fee during ecosystem growth phase
+    verifiedSettlementTx: '0xf7113e7d05dad2ae241439afd16c3dc8f093cbe415cf9c99b87134014bad193d' as `0x${string}`,
+    verifiedBlock: 68409300,
+    protocolFeeBps: 0,
   },
-  // --- SECONDARY SPOKE: BASE SEPOLIA ---
   spoke: {
     network: 'Base Sepolia',
     chainId: 84532,

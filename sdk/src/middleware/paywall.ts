@@ -8,13 +8,12 @@ import { TokenBucketRateLimiter } from './rate-limiter/tokenBucket';
 import { VoucherAccumulator } from './accumulator/voucherStore';
 import { PaythosVaultClient } from '../client/vaultClient';
 
-// Re-export so users can import both from paywall
 export { VoucherAccumulator };
 
 export interface PaywallConfig {
   merchantAddress: Address;
   vaultAddress: Address;
-  tokenAddress: Address; // Canonical USDC
+  tokenAddress: Address;
   chainId: number;
   pricePerCall: bigint;
   accumulator: VoucherAccumulator;
@@ -24,7 +23,6 @@ export interface PaywallConfig {
 
 export function createX402Paywall(config: PaywallConfig) {
   const rateLimiter = config.rateLimiter || new TokenBucketRateLimiter(20, 5);
-  // In-memory cache of verified active agent sessions (valid for 5 mins)
   const sessionCache: Map<string, { expiresAt: bigint; remainingDailyCap: bigint; lastChecked: number }> = new Map();
 
   return async function handlePaywall(req: any, res: any, next: () => void) {
@@ -115,43 +113,63 @@ export function createX402Paywall(config: PaywallConfig) {
       return res.end(JSON.stringify({ error: 'Invalid EIP-712 voucher signature' }));
     }
 
-    // 4. On-Chain Session Validity & Daily Cap Verification
-    const agentLower = voucher.agentKey.toLowerCase();
-    const cached = sessionCache.get(agentLower);
-    const nowMs = Date.now();
-
-    if (config.vaultClient && (!cached || nowMs - cached.lastChecked > 120_000)) {
-      try {
-        const session = await config.vaultClient.getSession(voucher.agentKey);
-        if (!session.isActive || now > session.expiresAt) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ error: 'Agent session inactive or expired on-chain' }));
-        }
-
-        const remaining = session.dailyLimit > session.spentToday ? session.dailyLimit - session.spentToday : 0n;
-        sessionCache.set(agentLower, {
-          expiresAt: session.expiresAt,
-          remainingDailyCap: remaining,
-          lastChecked: nowMs,
-        });
-      } catch (err) {
-        console.warn('[Paythos Paywall] Warning: Could not verify on-chain session state:', err);
-      }
-    }
-
-    // 5. Monotonic Delta Check
+    // 4. Calculate Payout Delta
     const existing = config.accumulator.getChannel(voucher.agentKey, voucher.merchant, voucher.sessionId);
     const lastAmount = existing ? existing.latestVoucher.voucher.cumulativeAmount : 0n;
+    const payoutDelta = voucher.cumulativeAmount - lastAmount;
 
-    if (voucher.cumulativeAmount < lastAmount + config.pricePerCall) {
+    if (payoutDelta < config.pricePerCall) {
       res.writeHead(402, { 'Content-Type': 'application/json' });
       return res.end(
         JSON.stringify({
           error: 'Insufficient incremental voucher amount',
           requiredDelta: config.pricePerCall.toString(),
-          providedDelta: (voucher.cumulativeAmount - lastAmount).toString(),
+          providedDelta: payoutDelta.toString(),
         })
       );
+    }
+
+    // 5. REAL ON-CHAIN DAILY CAP ENFORCEMENT
+    const agentLower = voucher.agentKey.toLowerCase();
+    const cached = sessionCache.get(agentLower);
+    const nowMs = Date.now();
+
+    if (config.vaultClient) {
+      let activeSession = cached;
+
+      if (!cached || nowMs - cached.lastChecked > 120_000) {
+        try {
+          const session = await config.vaultClient.getSession(voucher.agentKey);
+          if (!session.isActive || now > session.expiresAt) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            return res.end(JSON.stringify({ error: 'Agent session inactive or expired on-chain' }));
+          }
+
+          const remaining = session.dailyLimit > session.spentToday ? session.dailyLimit - session.spentToday : 0n;
+          activeSession = {
+            expiresAt: session.expiresAt,
+            remainingDailyCap: remaining,
+            lastChecked: nowMs,
+          };
+          sessionCache.set(agentLower, activeSession);
+        } catch (err) {
+          // FAIL CLOSED on RPC error to prevent uncollateralized drained calls
+          res.writeHead(503, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'Unable to verify on-chain vault solvency. Try again.' }));
+        }
+      }
+
+      // STRICT ENFORCEMENT: Reject if the delta exceeds the agent's remaining daily cap!
+      if (activeSession && payoutDelta > activeSession.remainingDailyCap) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(
+          JSON.stringify({
+            error: 'On-chain daily spend cap exceeded',
+            payoutDelta: payoutDelta.toString(),
+            remainingDailyCap: activeSession.remainingDailyCap.toString(),
+          })
+        );
+      }
     }
 
     // 6. Record voucher in accumulator
