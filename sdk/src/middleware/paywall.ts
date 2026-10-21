@@ -13,17 +13,17 @@ export { VoucherAccumulator };
 export interface PaywallConfig {
   merchantAddress: Address;
   vaultAddress: Address;
-  tokenAddress: Address;
+  tokenAddress: Address; // Canonical USDC
   chainId: number;
   pricePerCall: bigint;
   accumulator: VoucherAccumulator;
-  vaultClient?: PaythosVaultClient;
+  vaultClient: PaythosVaultClient; // Formal requirement for on-chain solvency
   rateLimiter?: TokenBucketRateLimiter;
 }
 
 export function createX402Paywall(config: PaywallConfig) {
   const rateLimiter = config.rateLimiter || new TokenBucketRateLimiter(20, 5);
-  const sessionCache: Map<string, { expiresAt: bigint; remainingDailyCap: bigint; lastChecked: number }> = new Map();
+  const sessionCache: Map<string, { dailyLimit: bigint; spentToday: bigint; expiresAt: bigint; lastChecked: number }> = new Map();
 
   return async function handlePaywall(req: any, res: any, next: () => void) {
     const rawHeader = req.headers['x-paythos-voucher'] || req.headers['x-payment-voucher'];
@@ -129,52 +129,70 @@ export function createX402Paywall(config: PaywallConfig) {
       );
     }
 
-    // 5. REAL ON-CHAIN DAILY CAP ENFORCEMENT
+    // 5. ON-CHAIN SESSION & TOTAL CUMULATIVE CAP ENFORCEMENT
     const agentLower = voucher.agentKey.toLowerCase();
     const cached = sessionCache.get(agentLower);
     const nowMs = Date.now();
+    let session = cached;
 
-    if (config.vaultClient) {
-      let activeSession = cached;
-
-      if (!cached || nowMs - cached.lastChecked > 120_000) {
-        try {
-          const session = await config.vaultClient.getSession(voucher.agentKey);
-          if (!session.isActive || now > session.expiresAt) {
-            res.writeHead(403, { 'Content-Type': 'application/json' });
-            return res.end(JSON.stringify({ error: 'Agent session inactive or expired on-chain' }));
-          }
-
-          const remaining = session.dailyLimit > session.spentToday ? session.dailyLimit - session.spentToday : 0n;
-          activeSession = {
-            expiresAt: session.expiresAt,
-            remainingDailyCap: remaining,
-            lastChecked: nowMs,
-          };
-          sessionCache.set(agentLower, activeSession);
-        } catch (err) {
-          // FAIL CLOSED on RPC error to prevent uncollateralized drained calls
-          res.writeHead(503, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ error: 'Unable to verify on-chain vault solvency. Try again.' }));
+    if (!cached || nowMs - cached.lastChecked > 120_000) {
+      try {
+        const onChain = await config.vaultClient.getSession(voucher.agentKey);
+        if (!onChain.isActive || now > onChain.expiresAt) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'Agent session inactive or expired on-chain' }));
         }
-      }
 
-      // STRICT ENFORCEMENT: Reject if the delta exceeds the agent's remaining daily cap!
-      if (activeSession && payoutDelta > activeSession.remainingDailyCap) {
+        session = {
+          dailyLimit: onChain.dailyLimit,
+          spentToday: onChain.spentToday,
+          expiresAt: onChain.expiresAt,
+          lastChecked: nowMs,
+        };
+        sessionCache.set(agentLower, session);
+      } catch (err) {
+        // FAIL CLOSED on RPC failure
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Unable to verify on-chain session. Failing closed.' }));
+      }
+    }
+
+    // CAP FIX: Compare total cumulative debt against on-chain limits
+    if (session) {
+      const projectedSpent = session.spentToday + payoutDelta;
+      if (projectedSpent > session.dailyLimit) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         return res.end(
           JSON.stringify({
             error: 'On-chain daily spend cap exceeded',
-            payoutDelta: payoutDelta.toString(),
-            remainingDailyCap: activeSession.remainingDailyCap.toString(),
+            dailyLimit: session.dailyLimit.toString(),
+            projectedSpent: projectedSpent.toString(),
           })
         );
       }
     }
 
-    // 6. Record voucher in accumulator
-    await config.accumulator.recordVoucher(signedVoucher);
+    // 6. REAL ON-CHAIN VAULT SOLVENCY CHECK
+    try {
+      const vaultBalance = await config.vaultClient.publicClient.readContract({
+        address: config.tokenAddress,
+        abi: [{ type: 'function', name: 'balanceOf', inputs: [{ name: 'account', type: 'address' }], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' }],
+        functionName: 'balanceOf',
+        args: [config.vaultAddress],
+      });
 
+      if (vaultBalance < payoutDelta) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Vault insolvent: insufficient on-chain USDC collateral to back voucher' }));
+      }
+    } catch {
+      // Fail closed if token balance check reverts
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Unable to verify vault collateral solvency' }));
+    }
+
+    // 7. Record voucher in accumulator
+    await config.accumulator.recordVoucher(signedVoucher);
     next();
   };
 }

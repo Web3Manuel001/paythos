@@ -8,6 +8,7 @@ export interface ChannelState {
   pendingClaimableAmount: bigint;
   channelOpenedTimestamp: number;
   consecutiveFailures: number;
+  nextAllowedFlushTimestamp: number;
   isFlushing: boolean;
 }
 
@@ -31,11 +32,11 @@ export class VoucherAccumulator {
     if (autoSweepIntervalMs > 0 && typeof setInterval !== 'undefined') {
       this.sweepTimer = setInterval(() => {
         this.sweepStaleChannels().catch((err) => {
-          console.error('[Paythos Accumulator] Background sweep error:', err);
+          console.error('[Paythos Accumulator] Sweep error:', err);
         });
       }, autoSweepIntervalMs);
 
-      // CRITICAL: .unref() prevents this timer from hanging Node.js CLI scripts or tests
+      // Prevent timer from hanging CLI scripts or tests
       if (this.sweepTimer && typeof this.sweepTimer.unref === 'function') {
         this.sweepTimer.unref();
       }
@@ -74,6 +75,7 @@ export class VoucherAccumulator {
     const channelStartTime = existing ? existing.channelOpenedTimestamp : now;
     const isCurrentlyFlushing = existing ? existing.isFlushing : false;
     const failures = existing ? existing.consecutiveFailures : 0;
+    const nextRetry = existing ? existing.nextAllowedFlushTimestamp : 0;
 
     const updatedState: ChannelState = {
       latestVoucher: signedVoucher,
@@ -81,12 +83,13 @@ export class VoucherAccumulator {
       pendingClaimableAmount: pending,
       channelOpenedTimestamp: channelStartTime,
       consecutiveFailures: failures,
+      nextAllowedFlushTimestamp: nextRetry,
       isFlushing: isCurrentlyFlushing,
     };
     this.channels.set(channelKey, updatedState);
 
-    // Flush if threshold reached and not already mid-flight
-    if (pending >= this.settlementThreshold && !isCurrentlyFlushing && this.vaultClient.walletClient) {
+    // Trigger flush if threshold reached, not currently in flight, and backoff expired
+    if (pending >= this.settlementThreshold && !isCurrentlyFlushing && now >= nextRetry && this.vaultClient.walletClient) {
       return await this.flushChannel(channelKey);
     }
 
@@ -97,7 +100,7 @@ export class VoucherAccumulator {
     const now = Math.floor(Date.now() / 1000);
 
     for (const [channelKey, state] of this.channels.entries()) {
-      if (state.pendingClaimableAmount > 0n && !state.isFlushing && state.consecutiveFailures < 3 && this.vaultClient.walletClient) {
+      if (state.pendingClaimableAmount > 0n && !state.isFlushing && now >= state.nextAllowedFlushTimestamp && this.vaultClient.walletClient) {
         const age = now - state.channelOpenedTimestamp;
         if (age >= this.maxVoucherAgeSeconds || state.pendingClaimableAmount >= this.settlementThreshold) {
           await this.flushChannel(channelKey);
@@ -110,30 +113,41 @@ export class VoucherAccumulator {
     const current = this.channels.get(channelKey);
     if (!current || current.isFlushing) return { settledOnChain: false };
 
-    // Lock channel to prevent race conditions during network latency
     current.isFlushing = true;
     const voucherToFlush = current.latestVoucher;
     const amountToFlush = voucherToFlush.voucher.cumulativeAmount;
+    const now = Math.floor(Date.now() / 1000);
 
     try {
       const txHash = await this.vaultClient.settleOnChain(voucherToFlush);
 
-      // RACE CONDITION FIX: Re-read the map entry after transaction completes!
-      // If a newer voucher arrived while tx was in flight, do NOT overwrite it!
+      // SUCCESS PATH: Re-read channel map to preserve any newer vouchers that arrived mid-flight
       const refreshed = this.channels.get(channelKey) || current;
       refreshed.lastSettledAmount = amountToFlush;
       refreshed.pendingClaimableAmount = refreshed.latestVoucher.voucher.cumulativeAmount - amountToFlush;
-      refreshed.channelOpenedTimestamp = Math.floor(Date.now() / 1000);
+      refreshed.channelOpenedTimestamp = now;
       refreshed.consecutiveFailures = 0;
+      refreshed.nextAllowedFlushTimestamp = 0;
       refreshed.isFlushing = false;
       this.channels.set(channelKey, refreshed);
 
       return { settledOnChain: true, txHash };
     } catch (err) {
-      current.isFlushing = false;
-      current.consecutiveFailures += 1;
-      this.channels.set(channelKey, current);
-      console.error(`[Paythos Accumulator] Settlement failed (Attempt ${current.consecutiveFailures}/3):`, err);
+      // FAILURE PATH FIX: Re-read map so newer vouchers are NOT wiped on error!
+      const refreshed = this.channels.get(channelKey) || current;
+      refreshed.isFlushing = false;
+      refreshed.consecutiveFailures += 1;
+
+      // Exponential backoff: 60s, 120s, 240s... max 1 hour
+      const backoffSeconds = Math.min(3600, 60 * Math.pow(2, refreshed.consecutiveFailures - 1));
+      refreshed.nextAllowedFlushTimestamp = now + backoffSeconds;
+      this.channels.set(channelKey, refreshed);
+
+      console.error(
+        `🚨 [Paythos Alert] Channel ${channelKey} settlement failed (${refreshed.consecutiveFailures} attempts). ` +
+        `Next retry in ${backoffSeconds}s. Error:`,
+        err
+      );
       return { settledOnChain: false };
     }
   }

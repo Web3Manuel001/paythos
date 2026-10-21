@@ -131,7 +131,7 @@ export default function PaythosInterface() {
         </div>
         <div className="hidden sm:flex items-center space-x-4 min-w-max text-[11px]">
           <a
-            href="https://sepolia.basescan.org/address/0xa9d5525BE440831c64695d30c915DF303E0151EF"
+            href="https://testnet.arcscan.app/address/0xa9d5525BE440831c64695d30c915DF303E0151EF"
             target="_blank"
             rel="noreferrer"
             className="text-zinc-400 hover:text-white transition flex items-center gap-1"
@@ -612,7 +612,7 @@ export default function PaythosInterface() {
           </div>
           <div className="flex items-center space-x-6">
             <a
-              href="https://sepolia.basescan.org/address/0xa9d5525BE440831c64695d30c915DF303E0151EF"
+              href="https://testnet.arcscan.app/address/0xa9d5525BE440831c64695d30c915DF303E0151EF"
               target="_blank"
               rel="noreferrer"
               className="hover:text-white transition"

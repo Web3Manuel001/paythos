@@ -10,7 +10,7 @@ export const PAYTHOS_CONFIG = {
     nativeUsdcAddress: '0x3600000000000000000000000000000000000000' as `0x${string}`,
     verifiedSettlementTx: '0xf7113e7d05dad2ae241439afd16c3dc8f093cbe415cf9c99b87134014bad193d' as `0x${string}`,
     verifiedBlock: 68409300,
-    protocolFeeBps: 0,
+    protocolFeeBps: 150, // 1.50% fee verified on-chain
   },
   spoke: {
     network: 'Base Sepolia',
