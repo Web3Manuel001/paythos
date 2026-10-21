@@ -1,59 +1,65 @@
 export interface EndpointHealth {
   endpoint: string;
-  successRate24h: number; // e.g. 99.8%
-  lastPaidStatusCode: number; // e.g. 200
+  statusCode: number;
   latencyMs: number;
-  isTransactable: boolean;
+  isLive: boolean;
+  timestamp: number;
 }
 
-// In-memory Transactability Index (Inspired by Selat AI, secured on Arc)
-export class TransactabilityIndex {
-  private healthLedger: Map<string, EndpointHealth> = new Map();
+/**
+ * Real-world live network probe.
+ * Zero mock seeds. Measures actual public internet latency and HTTP status.
+ */
+export class LiveNetworkProbe {
+  private healthCache: Map<string, EndpointHealth> = new Map();
 
-  constructor() {
-    // Seed verified Arc Marketplace endpoints
-    this.recordResult('https://api.blockrun.ai/v1/chat/completions', 200, 180);
-    this.recordResult('https://api.exa.ai/search', 200, 240);
-    this.recordResult('https://api.coingecko.com/api/v3/simple/price', 200, 95);
-  }
+  async probe(url: string, timeoutMs: number = 4000): Promise<EndpointHealth> {
+    const start = performance.now();
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-  recordResult(endpoint: string, statusCode: number, latencyMs: number) {
-    const existing = this.healthLedger.get(endpoint) || {
-      endpoint,
-      successRate24h: 100,
-      lastPaidStatusCode: statusCode,
-      latencyMs,
-      isTransactable: true,
-    };
+      // Execute real HTTP request over the internet
+      const response = await fetch(url, {
+        method: 'HEAD',
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Paythos-Network-Probe/2.1 (Arc L1 Clearinghouse)',
+        },
+      });
+      clearTimeout(timeoutId);
 
-    const isSuccess = statusCode >= 200 && statusCode < 300;
-    existing.lastPaidStatusCode = statusCode;
-    existing.latencyMs = latencyMs;
-    existing.isTransactable = isSuccess;
+      const latency = Math.round(performance.now() - start);
+      const isLive = response.status >= 200 && response.status < 400;
 
-    this.healthLedger.set(endpoint, existing);
-  }
-
-  /**
-   * Pre-flight check before spending: Returns false if endpoint is degraded.
-   */
-  canTransact(endpoint: string): { allowed: boolean; reason?: string } {
-    const health = this.healthLedger.get(endpoint);
-    if (!health) {
-      return { allowed: true }; // First-time discovery allowed
-    }
-
-    if (!health.isTransactable) {
-      return {
-        allowed: false,
-        reason: `Endpoint ${endpoint} failed last call with HTTP ${health.lastPaidStatusCode}. Spend blocked.`,
+      const health: EndpointHealth = {
+        endpoint: url,
+        statusCode: response.status,
+        latencyMs: latency,
+        isLive,
+        timestamp: Date.now(),
       };
-    }
 
-    return { allowed: true };
+      this.healthCache.set(url, health);
+      return health;
+    } catch (err: any) {
+      const latency = Math.round(performance.now() - start);
+      const statusCode = err.name === 'AbortError' ? 408 : 503;
+
+      const health: EndpointHealth = {
+        endpoint: url,
+        statusCode,
+        latencyMs: latency,
+        isLive: false,
+        timestamp: Date.now(),
+      };
+
+      this.healthCache.set(url, health);
+      return health;
+    }
   }
 
-  getScore(endpoint: string): EndpointHealth | undefined {
-    return this.healthLedger.get(endpoint);
+  getCachedHealth(url: string): EndpointHealth | undefined {
+    return this.healthCache.get(url);
   }
 }

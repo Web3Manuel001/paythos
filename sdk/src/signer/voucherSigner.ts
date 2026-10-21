@@ -7,13 +7,16 @@ import {
   getEIP712Domain,
 } from '../types';
 
+export interface AgentVoucherResult extends SignedPaymentVoucher {
+  headerPayload: string; // Base64 transmission-ready header
+}
+
 export class AgentVoucherSigner {
   private account;
   public readonly agentAddress: Address;
   public readonly vaultAddress: Address;
   public readonly chainId: number;
 
-  // In-memory monotonic cumulative counters keyed by: merchant-sessionId
   private cumulativeSpendLedger: Map<string, bigint> = new Map();
   private nonceCounter: bigint = 0n;
 
@@ -24,21 +27,13 @@ export class AgentVoucherSigner {
     this.chainId = chainId;
   }
 
-  /**
-   * Generates and signs a cumulative payment voucher off-chain in < 1ms.
-   * @param merchant The recipient API provider address
-   * @param token The ERC-20 token address (USDC on Base)
-   * @param deltaAmount The incremental cost of this API hit (in atomic units)
-   * @param sessionId Unique session identifier
-   * @param ttlSeconds Voucher validity duration (default: 1 hour)
-   */
   async signCumulativePayment(
     merchant: Address,
     token: Address,
     deltaAmount: bigint,
     sessionId: bigint = 1n,
     ttlSeconds: bigint = 3600n
-  ): Promise<SignedPaymentVoucher> {
+  ): Promise<AgentVoucherResult> {
     const channelKey = `${merchant.toLowerCase()}-${sessionId.toString()}-${token.toLowerCase()}`;
     const previousCumulative = this.cumulativeSpendLedger.get(channelKey) || 0n;
     const newCumulative = previousCumulative + deltaAmount;
@@ -65,10 +60,25 @@ export class AgentVoucherSigner {
       message: voucher,
     });
 
-    // Update in-memory monotonic counter
     this.cumulativeSpendLedger.set(channelKey, newCumulative);
 
-    return { voucher, signature };
+    // Automatically encode transmission-ready base64 header
+    const headerPayload = Buffer.from(
+      JSON.stringify({
+        voucher: {
+          token: voucher.token,
+          merchant: voucher.merchant,
+          agentKey: voucher.agentKey,
+          sessionId: voucher.sessionId.toString(),
+          cumulativeAmount: voucher.cumulativeAmount.toString(),
+          expiresAt: voucher.expiresAt.toString(),
+          nonce: voucher.nonce.toString(),
+        },
+        signature,
+      })
+    ).toString('base64');
+
+    return { voucher, signature, headerPayload };
   }
 
   getCurrentCumulative(merchant: Address, sessionId: bigint, token: Address): bigint {
