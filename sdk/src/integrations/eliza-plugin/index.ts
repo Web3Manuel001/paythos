@@ -41,7 +41,7 @@ export const paythosPlugin = {
           })
         ).toString('base64');
 
-        if (callback) {
+        if (callback) { 
           callback({
             text: `Authorized payment of ${pricePerCall} units to ${merchantAddress}. Generated voucher header for transmission.`,
             content: { header: base64Voucher },
