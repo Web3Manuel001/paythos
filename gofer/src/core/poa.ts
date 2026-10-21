@@ -28,7 +28,7 @@ export interface MerkleizedAuditCertificate {
 
 /**
  * Native Proof-of-Authorization & Merkleized Witness Chain.
- * Stolen from Proof.com's legal non-repudiation architecture.
+ * 
  */
 export class ProofOfAuthorizationEngine {
   private currentRollingHash: Hex = '0x0';

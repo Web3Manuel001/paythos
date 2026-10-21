@@ -22,7 +22,7 @@ async function main() {
   console.log('======================================================');
   console.log(`Vault:      ${LIVE_VAULT}`);
   console.log(`Settlement: Circle USDC on Arc Testnet (5042002)`);
-  console.log(`Engine:     Jev System One + Proof.com PoA Witness Chain`);
+  console.log(`Engine:     Jev System One + Non-Repudiation Witness Chain`);
   console.log('------------------------------------------------------');
   console.log('Available Commands:');
   console.log('  1. run <intent>   - Execute custom autonomous errand pipeline');

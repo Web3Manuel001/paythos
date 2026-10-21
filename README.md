@@ -1,50 +1,52 @@
 # Paythos Protocol 🛡️🤖
 
-> **The Non-Custodial Monetary Operating System & EIP-712 Micro-Settlement Protocol for Autonomous AI Agents on Base L2.**
+> **Non-Custodial Spend Policy Engine & Cryptographic Authorization Layer for Autonomous Agents on Arc L1 and Circle USDC.**
 
-[![Network: Base](https://img.shields.io/badge/Network-Base_L2-blue.svg)](https://base.org)
-[![Standard: x402 v2](https://img.shields.io/badge/Standard-x402_v2-emerald.svg)](https://x402.org)
-[![Contracts: Base Sepolia](https://img.shields.io/badge/Contracts-Verified_on_Basescan-black.svg)](https://sepolia.basescan.org/address/0x6E0837c166c01710dC86f2E25DAE2fFD574343D9)
+[![Network: Arc L1](https://img.shields.io/badge/Network-Arc_Layer--1-blue.svg)](https://arc.network)
+[![Settlement: Circle USDC](https://img.shields.io/badge/Asset-Native_USDC-emerald.svg)](https://circle.com/usdc)
+[![Standard: x402 v2.1](https://img.shields.io/badge/Standard-x402_v2.1-purple.svg)](https://x402.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-zinc.svg)](LICENSE)
+
+---
+
+## ⚡ The Core Problem
+
+1. **The Meatspace Identity Wall:** Autonomous software agents cannot open bank accounts, hold credit cards, or pass KYC.
+2. **The Prompt Injection Threat:** Giving an autonomous LLM unconstrained access to a treasury private key creates catastrophic financial exposure.
+3. **The Micro-Billing Dilemma:** TradFi payment rails impose $0.30 fixed fees (a 15,000% fee penalty on a $0.002 API query), while vanilla on-chain transactions incur gas overhead on every call.
+
+---
+
+## 🛡️ The Paythos Architecture
+
+Paythos is an **enterprise policy and spend-governance layer** designed to sit directly on top of Circle's infrastructure (Arc L1, Circle Programmable Wallets, and Circle Nanopayments):
+
+* **Cryptographic Session Scoping:** Authorize ephemeral agent session keys with strict on-chain daily spend limits and TTL expiries.
+* **Instant Prompt-Injection Killswitch:** Administrative revocation terminates rogue agents immediately on-chain with zero settlement delay.
+* **Proof-of-Authorization (PoA) Envelopes:** Every micro-payment binds the human intent hash and safety score into the voucher payload.
+* **Arc Structured Transaction Memos:** Batch settlements stamp Merkleized audit hashes directly into Arc transaction memos for institutional compliance.
+* **Monotonic Nonce Sequencing:** On-chain enforcement preventing voucher replay or stale-state extraction.
 
 ---
 
 ## 📜 Verified Deployments
 
-| Contract | Address | Network | Explorer |
+| Component | Network | Address / Reference | Explorer |
 | :--- | :--- | :--- | :--- |
-| **PaythosVault Core** | `0x6E0837c166c01710dC86f2E25DAE2fFD574343D9` | Base Sepolia (`84532`) | [View on Basescan](https://sepolia.basescan.org/address/0x6E0837c166c01710dC86f2E25DAE2fFD574343D9) |
-| **Protocol Fee** | `1.50%` (150 bps) | Base L2 | Settled on-chain |
+| **PaythosVault Core** | Arc Testnet (`5042002`) | `0xFb57ceAEF685B73Dc0270f806545e195393Cc277` | [ArcScan](https://testnet.arcscan.app/address/0xFb57ceAEF685B73Dc0270f806545e195393Cc277) |
+| **Settlement Asset** | Arc Native USDC | `0x3600000000000000000000000000000000000000` | [Arc Docs](https://docs.arc.io/arc/references/contract-addresses) |
+| **Base Liquidity Spoke** | Base Sepolia (`84532`) | `0x6E0837c166c01710dC86f2E25DAE2fFD574343D9` | [Basescan](https://sepolia.basescan.org/address/0x6E0837c166c01710dC86f2E25DAE2fFD574343D9) |
 
 ---
 
-## ⚡ Why Paythos?
+## 🚀 Quickstart
 
-1. **The Meatspace Identity Wall:** Autonomous software cannot open bank accounts or pass Stripe KYC.
-2. **The Micropayment Fee Crisis:** Traditional payment rails charge $0.30 fixed fees. For a $0.002 API query, fees exceed 15,000%.
-3. **The Prompt Injection Threat:** Giving an autonomous LLM a master crypto private key risks 100% treasury loss. Paythos enforces cryptographic session policies, daily limits, and TTL expiries on-chain.
-4. **The Gas Paradox:** Vanilla crypto transactions cost $0.01+ per call. Paythos off-chain EIP-712 cumulative vouchers reduce on-chain gas overhead by **98%**.
-
----
-
-## 📂 Repository Architecture
-
-```text
-paythos/
-├── contracts/        # Foundry L2 Smart Contracts (PaythosVault.sol)
-├── sdk/              # Core TypeScript engine (Viem, EIP-712 signer, x402 paywall)
-│   ├── src/signer/   # Sub-millisecond off-chain voucher signer
-│   ├── src/client/   # Vault management & on-chain settlement
-│   └── src/middleware/# Token-bucket rate limiter & voucher accumulator
-└── web/              # Next.js 15 Enterprise Portal & Gofer Errand Desk
-🚀 Quickstart
-1. Autonomous x402 Agent Signer
-code
-TypeScript
+### 1. Autonomous Agent Signer
+```typescript
 import { AgentVoucherSigner } from './sdk/src/signer/voucherSigner';
 
-const signer = new AgentVoucherSigner(process.env.AGENT_SESSION_KEY, VAULT_ADDRESS, 84532);
-const payment = await signer.signCumulativePayment(merchantAddress, usdcAddress, 2000n);
+const signer = new AgentVoucherSigner(process.env.AGENT_SESSION_KEY, VAULT_ADDRESS, 5042002);
+const payment = await signer.signCumulativePayment(merchantAddress, ARC_USDC, 2000n);
 
 await fetch('https://api.provider.com/data', {
   headers: { 'X-Paythos-Voucher': payment.headerPayload }
@@ -57,7 +59,11 @@ import { createX402Paywall, VoucherAccumulator } from './sdk/src/middleware/payw
 app.use('/api/data', createX402Paywall({
   merchantAddress: '0xYourMerchant',
   vaultAddress: '0xPaythosVault',
-  tokenAddress: '0xUSDC',
+  tokenAddress: '0x3600000000000000000000000000000000000000',
   pricePerCall: 2000n,
-  accumulator: new VoucherAccumulator(vaultClient, 5_000_000n) // Auto-flush at $5.00
+  accumulator: new VoucherAccumulator(vaultClient, 5_000_000n, 1200) // Flush at $5 OR 20 mins
 }));
+🧪 Security & Verification
+Foundry Property Fuzzing: 10/10 passing invariant test suites (256 runs per test) under via_ir on Solc 0.8.24.
+Checks-Effects-Interactions (CEI): Reentrancy protection and strict state-before-transfer ordering.
+Non-Custodial Multi-Step Timelocks: 6-hour delay on owner collateral withdrawals to protect merchant settlement guarantees.

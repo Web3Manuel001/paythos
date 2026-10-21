@@ -5,23 +5,25 @@ import "forge-std/Script.sol";
 import "../src/core/PaythosVault.sol";
 
 contract DeployPaythosVaultArc is Script {
-    // Official Circle USDC on Arc Testnet (or fallback to testnet deploy address)
-    address public constant ARC_TESTNET_USDC = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
+    // Official Native USDC on Circle Arc L1 (Source: docs.arc.io/arc/references/contract-addresses)
+    address public constant ARC_NATIVE_USDC = 0x3600000000000000000000000000000000000000;
 
     function run() external returns (address vaultAddress) {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
 
         address treasury = vm.envOr("TREASURY_ADDRESS", deployer);
-        address settlementToken = vm.envOr("SETTLEMENT_TOKEN", ARC_TESTNET_USDC);
-        uint256 feeBps = vm.envOr("PROTOCOL_FEE_BPS", uint256(150)); // 1.50%
+        address settlementToken = vm.envOr("SETTLEMENT_TOKEN", ARC_NATIVE_USDC);
+        
+        // Fee set to 0 bps for ecosystem growth (Monetization via B2B Fleet SaaS)
+        uint256 feeBps = vm.envOr("PROTOCOL_FEE_BPS", uint256(0)); 
 
         console.log("==================================================");
-        console.log("DEPLOYING HARDENED PAYTHOS VAULT NATIVELY TO ARC L1");
-        console.log("Settlement Token:", settlementToken);
+        console.log("DEPLOYING PAYTHOS POLICY VAULT NATIVELY TO ARC L1");
+        console.log("Settlement Token: Arc Native USDC (0x3600...0000)");
         console.log("Deployer:        ", deployer);
         console.log("Treasury:        ", treasury);
-        console.log("Fee Bps:         ", feeBps);
+        console.log("Protocol Fee:    ", feeBps, "bps (Ecosystem Aligned)");
         console.log("==================================================");
 
         vm.startBroadcast(deployerPrivateKey);

@@ -94,7 +94,7 @@ export class GoferRuntime {
       log.push(`    • Signed EIP-712 Voucher (<1ms): Cumulative Debt = $${formatUnits(ticket.voucher.cumulativeAmount, 6)} USDC`);
       log.push(`    • Nonce: ${ticket.voucher.nonce.toString()}`);
 
-      // Update Merkleized rolling witness hash chain (Proof.com primitive)
+      // Update Merkleized rolling witness hash chain (Forensic Merkleized Audit Chain)
       const rollingHash = this.poa.recordStep(
         step.url,
         step.costUsdc,
