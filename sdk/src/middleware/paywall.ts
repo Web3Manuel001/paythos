@@ -8,6 +8,9 @@ import { TokenBucketRateLimiter } from './rate-limiter/tokenBucket';
 import { VoucherAccumulator } from './accumulator/voucherStore';
 import { PaythosVaultClient } from '../client/vaultClient';
 
+// Re-export so users can import both from paywall
+export { VoucherAccumulator };
+
 export interface PaywallConfig {
   merchantAddress: Address;
   vaultAddress: Address;
@@ -22,7 +25,7 @@ export interface PaywallConfig {
 export function createX402Paywall(config: PaywallConfig) {
   const rateLimiter = config.rateLimiter || new TokenBucketRateLimiter(20, 5);
   // In-memory cache of verified active agent sessions (valid for 5 mins)
-  const verifiedAgentSessions: Map<string, number> = new Map();
+  const sessionCache: Map<string, { expiresAt: bigint; remainingDailyCap: bigint; lastChecked: number }> = new Map();
 
   return async function handlePaywall(req: any, res: any, next: () => void) {
     const rawHeader = req.headers['x-paythos-voucher'] || req.headers['x-payment-voucher'];
@@ -35,6 +38,7 @@ export function createX402Paywall(config: PaywallConfig) {
         'X-Paythos-Token': config.tokenAddress,
         'X-Paythos-Merchant': config.merchantAddress,
         'X-Paythos-Vault': config.vaultAddress,
+        'X-Paythos-Chain-Id': config.chainId.toString(),
       });
       return res.end(
         JSON.stringify({
@@ -74,7 +78,7 @@ export function createX402Paywall(config: PaywallConfig) {
 
     const { voucher, signature } = signedVoucher;
 
-    // 1. Strict Bound Field Checks (Prevents farming free calls to wrong merchant/token)
+    // 1. Strict Bound Field Checks
     if (voucher.merchant.toLowerCase() !== config.merchantAddress.toLowerCase()) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'Voucher merchant mismatch' }));
@@ -111,20 +115,25 @@ export function createX402Paywall(config: PaywallConfig) {
       return res.end(JSON.stringify({ error: 'Invalid EIP-712 voucher signature' }));
     }
 
-    // 4. On-Chain Session Preflight Cache Check
+    // 4. On-Chain Session Validity & Daily Cap Verification
     const agentLower = voucher.agentKey.toLowerCase();
-    const cachedTime = verifiedAgentSessions.get(agentLower) || 0;
+    const cached = sessionCache.get(agentLower);
     const nowMs = Date.now();
 
-    if (config.vaultClient && nowMs - cachedTime > 300_000) {
-      // Refresh cache every 5 minutes from on-chain RPC
+    if (config.vaultClient && (!cached || nowMs - cached.lastChecked > 120_000)) {
       try {
         const session = await config.vaultClient.getSession(voucher.agentKey);
         if (!session.isActive || now > session.expiresAt) {
           res.writeHead(403, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ error: 'Agent session is inactive or revoked on-chain' }));
+          return res.end(JSON.stringify({ error: 'Agent session inactive or expired on-chain' }));
         }
-        verifiedAgentSessions.set(agentLower, nowMs);
+
+        const remaining = session.dailyLimit > session.spentToday ? session.dailyLimit - session.spentToday : 0n;
+        sessionCache.set(agentLower, {
+          expiresAt: session.expiresAt,
+          remainingDailyCap: remaining,
+          lastChecked: nowMs,
+        });
       } catch (err) {
         console.warn('[Paythos Paywall] Warning: Could not verify on-chain session state:', err);
       }
@@ -148,7 +157,6 @@ export function createX402Paywall(config: PaywallConfig) {
     // 6. Record voucher in accumulator
     await config.accumulator.recordVoucher(signedVoucher);
 
-    // Pass through to protected handler
     next();
   };
 }

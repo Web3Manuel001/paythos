@@ -5,10 +5,6 @@ export interface JevDecision {
   reason: string;
 }
 
-/**
- * Jev System One Fast Decision Model (TypeSafe AI pattern).
- * Evaluates spend intent and prompt-injection risks in < 80ms.
- */
 export class JevDecisionEngine {
   private apiKey?: string;
 
@@ -19,7 +15,7 @@ export class JevDecisionEngine {
   async evaluateIntent(userGoal: string, targetEndpoint: string, costUsdc: string): Promise<JevDecision> {
     const start = performance.now();
 
-    // 1. If API key present, execute live HTTP call to TypeSafe AI's System One endpoint
+    // 1. Live Call to TypeSafe AI's System One Endpoint
     if (this.apiKey) {
       try {
         const res = await fetch('https://api.typesafe.ai/v1/systemone', {
@@ -42,16 +38,23 @@ export class JevDecisionEngine {
 
         const data = await res.json();
         const latencyMs = Math.round(performance.now() - start);
-        const probabilitySafe = data.answers?.is_safe?.noul ?? 0.95;
+        // FAIL CLOSED: If answer is missing, default to 0.0 (UNSAFE)
+        const probabilitySafe = data.answers?.is_safe?.noul ?? 0.0;
 
         return {
           isSafe: probabilitySafe >= 0.85,
           confidence: probabilitySafe,
           latencyMs,
-          reason: probabilitySafe >= 0.85 ? 'Jev System One: Goal aligned' : 'Jev System One: Intent drift detected',
+          reason: probabilitySafe >= 0.85 ? 'Jev System One: Goal aligned' : 'Jev System One: Intent drift detected (Rejected)',
         };
-      } catch {
-        // Fallback to internal fast classifier on network drop
+      } catch (err: any) {
+        // FAIL CLOSED on network error
+        return {
+          isSafe: false,
+          confidence: 0.0,
+          latencyMs: Math.round(performance.now() - start),
+          reason: `Jev System One: Verification unreachable (${err.message}). Failing closed.`,
+        };
       }
     }
 
@@ -59,17 +62,18 @@ export class JevDecisionEngine {
     const latencyMs = Math.round(performance.now() - start);
     const lowerEndpoint = targetEndpoint.toLowerCase();
 
-    // Block known malicious patterns or dangerous schemes
+    // Strict local safety bounds
     const isSuspicious = 
       lowerEndpoint.includes('drain') || 
       lowerEndpoint.includes('transfer-all') ||
-      parseFloat(costUsdc) > 50.0; // Enforce micro-billing scope
+      lowerEndpoint.includes('eval') ||
+      parseFloat(costUsdc) > 10.0; // Hard micro-billing ceiling
 
     return {
       isSafe: !isSuspicious,
-      confidence: isSuspicious ? 0.05 : 0.99,
+      confidence: isSuspicious ? 0.0 : 0.99,
       latencyMs: Math.max(latencyMs, 1),
-      reason: isSuspicious ? 'Spend blocked: High-risk endpoint or price out of bounds' : 'Spend intent verified',
+      reason: isSuspicious ? 'Spend blocked: High-risk pattern detected' : 'Spend intent verified',
     };
   }
 }

@@ -34,6 +34,29 @@ export const PAYTHOS_VAULT_ABI = [
   },
   {
     type: 'function',
+    name: 'settleVoucherWithMemo',
+    inputs: [
+      {
+        name: 'voucher',
+        type: 'tuple',
+        components: [
+          { name: 'token', type: 'address' },
+          { name: 'merchant', type: 'address' },
+          { name: 'agentKey', type: 'address' },
+          { name: 'sessionId', type: 'uint256' },
+          { name: 'cumulativeAmount', type: 'uint256' },
+          { name: 'expiresAt', type: 'uint256' },
+          { name: 'nonce', type: 'uint256' },
+        ],
+      },
+      { name: 'arcMemoHash', type: 'bytes32' },
+      { name: 'signature', type: 'bytes' },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
     name: 'sessions',
     inputs: [{ name: 'agentKey', type: 'address' }],
     outputs: [
@@ -51,6 +74,13 @@ export const PAYTHOS_VAULT_ABI = [
     name: 'settledAmount',
     inputs: [{ name: 'channelKey', type: 'bytes32' }],
     outputs: [{ name: '', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'settlementToken',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
     stateMutability: 'view',
   },
   {
@@ -128,6 +158,22 @@ export class PaythosVaultClient {
       abi: PAYTHOS_VAULT_ABI,
       functionName: 'settleVoucher',
       args: [signedVoucher.voucher, signedVoucher.signature],
+    });
+
+    return await this.walletClient.writeContract(request);
+  }
+
+  async settleOnChainWithMemo(signedVoucher: SignedPaymentVoucher, arcMemoHash: Hex): Promise<Hex> {
+    if (!this.walletClient || !this.walletClient.account) {
+      throw new Error('WalletClient with active account required for settlement');
+    }
+
+    const { request } = await this.publicClient.simulateContract({
+      account: this.walletClient.account,
+      address: this.vaultAddress,
+      abi: PAYTHOS_VAULT_ABI,
+      functionName: 'settleVoucherWithMemo',
+      args: [signedVoucher.voucher, arcMemoHash, signedVoucher.signature],
     });
 
     return await this.walletClient.writeContract(request);
