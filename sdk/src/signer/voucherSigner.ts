@@ -6,9 +6,10 @@ import {
   PAYTHOS_EIP712_TYPES,
   getEIP712Domain,
 } from '../types';
+import { FileLedgerStore, PersistedChannel } from '../storage/store';
 
 export interface AgentVoucherResult extends SignedPaymentVoucher {
-  headerPayload: string; // Base64 transmission-ready header
+  headerPayload: string;
 }
 
 export class AgentVoucherSigner {
@@ -16,15 +17,14 @@ export class AgentVoucherSigner {
   public readonly agentAddress: Address;
   public readonly vaultAddress: Address;
   public readonly chainId: number;
+  private store: FileLedgerStore;
 
-  private cumulativeSpendLedger: Map<string, bigint> = new Map();
-  private nonceCounter: bigint = 0n;
-
-  constructor(sessionPrivateKey: Hex, vaultAddress: Address, chainId: number) {
+  constructor(sessionPrivateKey: Hex, vaultAddress: Address, chainId: number, storageDir?: string) {
     this.account = privateKeyToAccount(sessionPrivateKey);
     this.agentAddress = this.account.address;
     this.vaultAddress = vaultAddress;
     this.chainId = chainId;
+    this.store = new FileLedgerStore(storageDir || '.paythos-data');
   }
 
   async signCumulativePayment(
@@ -35,10 +35,14 @@ export class AgentVoucherSigner {
     ttlSeconds: bigint = 3600n
   ): Promise<AgentVoucherResult> {
     const channelKey = `${merchant.toLowerCase()}-${sessionId.toString()}-${token.toLowerCase()}`;
-    const previousCumulative = this.cumulativeSpendLedger.get(channelKey) || 0n;
-    const newCumulative = previousCumulative + deltaAmount;
+    
+    // PERSISTENCE RECOVERY: Read previous state from disk to prevent restart desync
+    const persisted: PersistedChannel | undefined = this.store.getChannel(channelKey);
+    const previousCumulative = persisted ? BigInt(persisted.cumulativeAmount) : 0n;
+    const previousNonce = persisted ? BigInt(persisted.lastNonce) : 0n;
 
-    this.nonceCounter += 1n;
+    const newCumulative = previousCumulative + deltaAmount;
+    const newNonce = previousNonce + 1n;
     const now = BigInt(Math.floor(Date.now() / 1000));
 
     const voucher: PaymentVoucher = {
@@ -48,7 +52,7 @@ export class AgentVoucherSigner {
       sessionId,
       cumulativeAmount: newCumulative,
       expiresAt: now + ttlSeconds,
-      nonce: this.nonceCounter,
+      nonce: newNonce,
     };
 
     const domain = getEIP712Domain(this.vaultAddress, this.chainId);
@@ -60,9 +64,15 @@ export class AgentVoucherSigner {
       message: voucher,
     });
 
-    this.cumulativeSpendLedger.set(channelKey, newCumulative);
+    // Write-through to disk store immediately
+    this.store.setChannel(channelKey, {
+      channelKey,
+      lastSettledAmount: persisted ? persisted.lastSettledAmount : '0',
+      cumulativeAmount: newCumulative.toString(),
+      lastNonce: newNonce.toString(),
+      updatedAt: Date.now(),
+    });
 
-    // Automatically encode transmission-ready base64 header
     const headerPayload = Buffer.from(
       JSON.stringify({
         voucher: {
@@ -83,6 +93,7 @@ export class AgentVoucherSigner {
 
   getCurrentCumulative(merchant: Address, sessionId: bigint, token: Address): bigint {
     const channelKey = `${merchant.toLowerCase()}-${sessionId.toString()}-${token.toLowerCase()}`;
-    return this.cumulativeSpendLedger.get(channelKey) || 0n;
+    const persisted = this.store.getChannel(channelKey);
+    return persisted ? BigInt(persisted.cumulativeAmount) : 0n;
   }
 }
