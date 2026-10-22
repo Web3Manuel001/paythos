@@ -353,7 +353,7 @@ export default function PaythosPlatform() {
 
           <div className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <span className="text-zinc-500">On-Chain Protocol Take Rate:</span>
-            <span className="text-zinc-300">150 basis points (1.50% fee cap at 500 bps)</span>
+            <span className="text-zinc-300">150 basis points (1.51.50% (150 bps) cap at 500 bps)</span>
           </div>
         </div>
       </section>

@@ -1,5 +1,5 @@
 import { Address, Hex } from 'viem';
-import { AgentVoucherSigner } from '../../sdk/src/signer/voucherSigner';
+import { AgentVoucherSigner } from '../../signer/voucherSigner';
 
 export const paythosPlugin = {
   name: 'paythos-payments',

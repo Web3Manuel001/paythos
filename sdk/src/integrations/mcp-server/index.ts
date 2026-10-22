@@ -5,8 +5,8 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { Address, Hex } from 'viem';
-import { AgentVoucherSigner } from '../../sdk/src/signer/voucherSigner';
-import { PaythosVaultClient } from '../../sdk/src/client/vaultClient';
+import { AgentVoucherSigner } from '../../signer/voucherSigner';
+import { PaythosVaultClient } from '../../client/vaultClient';
 
 // Configuration loaded from Agent environment
 const SESSION_PRIVATE_KEY = (process.env.PAYTHOS_SESSION_KEY || '0x0') as Hex;

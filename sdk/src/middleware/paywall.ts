@@ -17,13 +17,16 @@ export interface PaywallConfig {
   chainId: number;
   pricePerCall: bigint;
   accumulator: VoucherAccumulator;
-  vaultClient: PaythosVaultClient; // Formal requirement for on-chain solvency
+  vaultClient: PaythosVaultClient;
   rateLimiter?: TokenBucketRateLimiter;
 }
 
 export function createX402Paywall(config: PaywallConfig) {
   const rateLimiter = config.rateLimiter || new TokenBucketRateLimiter(20, 5);
+  
+  // In-memory caches (prevents RPC hammering)
   const sessionCache: Map<string, { dailyLimit: bigint; spentToday: bigint; expiresAt: bigint; lastChecked: number }> = new Map();
+  let vaultBalanceCache: { balance: bigint; lastChecked: number } = { balance: 0n, lastChecked: 0 };
 
   return async function handlePaywall(req: any, res: any, next: () => void) {
     const rawHeader = req.headers['x-paythos-voucher'] || req.headers['x-payment-voucher'];
@@ -113,8 +116,11 @@ export function createX402Paywall(config: PaywallConfig) {
       return res.end(JSON.stringify({ error: 'Invalid EIP-712 voucher signature' }));
     }
 
-    // 4. Calculate Payout Delta
+    // 4. Calculate Total Unsettled Debt (Mathematical Fix)
     const existing = config.accumulator.getChannel(voucher.agentKey, voucher.merchant, voucher.sessionId);
+    const lastSettled = existing ? existing.lastSettledAmount : 0n;
+    const unsettled = voucher.cumulativeAmount - lastSettled;
+
     const lastAmount = existing ? existing.latestVoucher.voucher.cumulativeAmount : 0n;
     const payoutDelta = voucher.cumulativeAmount - lastAmount;
 
@@ -129,7 +135,7 @@ export function createX402Paywall(config: PaywallConfig) {
       );
     }
 
-    // 5. ON-CHAIN SESSION & TOTAL CUMULATIVE CAP ENFORCEMENT
+    // 5. ON-CHAIN SESSION & TOTAL UNSETTLED CAP ENFORCEMENT
     const agentLower = voucher.agentKey.toLowerCase();
     const cached = sessionCache.get(agentLower);
     const nowMs = Date.now();
@@ -150,45 +156,54 @@ export function createX402Paywall(config: PaywallConfig) {
           lastChecked: nowMs,
         };
         sessionCache.set(agentLower, session);
-      } catch (err) {
-        // FAIL CLOSED on RPC failure
+      } catch {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ error: 'Unable to verify on-chain session. Failing closed.' }));
       }
     }
 
-    // CAP FIX: Compare total cumulative debt against on-chain limits
+    // STRICT UNSETTLED CAP CHECK (Auditor Mathematical Fix)
     if (session) {
-      const projectedSpent = session.spentToday + payoutDelta;
-      if (projectedSpent > session.dailyLimit) {
+      if (session.spentToday + unsettled > session.dailyLimit) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         return res.end(
           JSON.stringify({
-            error: 'On-chain daily spend cap exceeded',
+            error: 'On-chain daily spend cap exceeded by total unsettled debt',
             dailyLimit: session.dailyLimit.toString(),
-            projectedSpent: projectedSpent.toString(),
+            spentToday: session.spentToday.toString(),
+            unsettledClaim: unsettled.toString(),
           })
         );
       }
     }
 
-    // 6. REAL ON-CHAIN VAULT SOLVENCY CHECK
-    try {
-      const vaultBalance = await config.vaultClient.publicClient.readContract({
-        address: config.tokenAddress,
-        abi: [{ type: 'function', name: 'balanceOf', inputs: [{ name: 'account', type: 'address' }], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' }],
-        functionName: 'balanceOf',
-        args: [config.vaultAddress],
-      });
-
-      if (vaultBalance < payoutDelta) {
+    // 6. ON-CHAIN VAULT SOLVENCY CHECK (Cached for 30 seconds)
+    let currentVaultBalance = vaultBalanceCache.balance;
+    if (nowMs - vaultBalanceCache.lastChecked > 30_000) {
+      try {
+        currentVaultBalance = await config.vaultClient.publicClient.readContract({
+          address: config.tokenAddress,
+          abi: [{ type: 'function', name: 'balanceOf', inputs: [{ name: 'account', type: 'address' }], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' }],
+          functionName: 'balanceOf',
+          args: [config.vaultAddress],
+        });
+        vaultBalanceCache = { balance: currentVaultBalance, lastChecked: nowMs };
+      } catch {
         res.writeHead(503, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'Vault insolvent: insufficient on-chain USDC collateral to back voucher' }));
+        return res.end(JSON.stringify({ error: 'Unable to verify vault collateral solvency' }));
       }
-    } catch {
-      // Fail closed if token balance check reverts
+    }
+
+    // STRICT SOLVENCY: Available vault balance must cover the TOTAL unsettled debt
+    if (currentVaultBalance < unsettled) {
       res.writeHead(503, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ error: 'Unable to verify vault collateral solvency' }));
+      return res.end(
+        JSON.stringify({
+          error: 'Vault insolvent: insufficient on-chain USDC collateral to back outstanding claims',
+          vaultBalance: currentVaultBalance.toString(),
+          unsettledRequired: unsettled.toString(),
+        })
+      );
     }
 
     // 7. Record voucher in accumulator
