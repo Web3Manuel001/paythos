@@ -23,10 +23,14 @@ export interface PaywallConfig {
 
 export function createX402Paywall(config: PaywallConfig) {
   const rateLimiter = config.rateLimiter || new TokenBucketRateLimiter(20, 5);
-  
-  // In-memory caches (prevents RPC hammering)
   const sessionCache: Map<string, { dailyLimit: bigint; spentToday: bigint; expiresAt: bigint; lastChecked: number }> = new Map();
   let vaultBalanceCache: { balance: bigint; lastChecked: number } = { balance: 0n, lastChecked: 0 };
+
+  // CACHE INVALIDATION HOOK: Invalidate session cache the instant a batch settles on-chain
+  config.accumulator.onSettled = (agentKey: Address) => {
+    sessionCache.delete(agentKey.toLowerCase());
+    vaultBalanceCache = { balance: 0n, lastChecked: 0 }; // Force refresh vault balance
+  };
 
   return async function handlePaywall(req: any, res: any, next: () => void) {
     const rawHeader = req.headers['x-paythos-voucher'] || req.headers['x-payment-voucher'];
@@ -116,7 +120,7 @@ export function createX402Paywall(config: PaywallConfig) {
       return res.end(JSON.stringify({ error: 'Invalid EIP-712 voucher signature' }));
     }
 
-    // 4. Calculate Total Unsettled Debt (Mathematical Fix)
+    // 4. Calculate Total Unsettled Debt
     const existing = config.accumulator.getChannel(voucher.agentKey, voucher.merchant, voucher.sessionId);
     const lastSettled = existing ? existing.lastSettledAmount : 0n;
     const unsettled = voucher.cumulativeAmount - lastSettled;
@@ -141,7 +145,7 @@ export function createX402Paywall(config: PaywallConfig) {
     const nowMs = Date.now();
     let session = cached;
 
-    if (!cached || nowMs - cached.lastChecked > 120_000) {
+    if (!cached || nowMs - cached.lastChecked > 60_000) {
       try {
         const onChain = await config.vaultClient.getSession(voucher.agentKey);
         if (!onChain.isActive || now > onChain.expiresAt) {
@@ -162,7 +166,7 @@ export function createX402Paywall(config: PaywallConfig) {
       }
     }
 
-    // STRICT UNSETTLED CAP CHECK (Auditor Mathematical Fix)
+    // ENFORCE CAP ON TOTAL UNSETTLED DEBT
     if (session) {
       if (session.spentToday + unsettled > session.dailyLimit) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
@@ -177,7 +181,7 @@ export function createX402Paywall(config: PaywallConfig) {
       }
     }
 
-    // 6. ON-CHAIN VAULT SOLVENCY CHECK (Cached for 30 seconds)
+    // 6. ON-CHAIN VAULT SOLVENCY CHECK (Cached 30s)
     let currentVaultBalance = vaultBalanceCache.balance;
     if (nowMs - vaultBalanceCache.lastChecked > 30_000) {
       try {
@@ -194,7 +198,6 @@ export function createX402Paywall(config: PaywallConfig) {
       }
     }
 
-    // STRICT SOLVENCY: Available vault balance must cover the TOTAL unsettled debt
     if (currentVaultBalance < unsettled) {
       res.writeHead(503, { 'Content-Type': 'application/json' });
       return res.end(
@@ -206,7 +209,6 @@ export function createX402Paywall(config: PaywallConfig) {
       );
     }
 
-    // 7. Record voucher in accumulator
     await config.accumulator.recordVoucher(signedVoucher);
     next();
   };

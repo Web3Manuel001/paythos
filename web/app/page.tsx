@@ -301,9 +301,9 @@ export default function PaythosPlatform() {
               <p className="mt-3 text-zinc-400 text-xs font-sans">For funds, institutions, and multi-tenant agent platforms.</p>
               <ul className="mt-4 space-y-2 text-zinc-300 text-[11px] border-t border-zinc-800 pt-4">
                 <li>✓ Unlimited Agent Fleets</li>
-                <li>✓ Dual-Key Human Approval Thresholds</li>
-                <li>✓ SOC 2 &amp; IRS 1099 Audit Exports</li>
-                <li>✓ Dedicated High-Throughput Relayer Node</li>
+                <li>✓ Granular Channel Nonce Sequencing</li>
+                <li>✓ Immutable Arc Memo Transaction Hashes</li>
+                <li>✓ Deterministic Daily Spend Caps Dedicated High-Throughput Relayer Nodeamp; TTL</li>
                 <li>✓ Custom Arc Structured Memo Schemas</li>
               </ul>
             </div>
@@ -353,7 +353,7 @@ export default function PaythosPlatform() {
 
           <div className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <span className="text-zinc-500">On-Chain Protocol Take Rate:</span>
-            <span className="text-zinc-300">150 basis points (1.51.50% (150 bps) cap at 500 bps)</span>
+            <span className="text-zinc-300">150 basis points (1.50% (150 bps) cap at 500 bps)</span>
           </div>
         </div>
       </section>

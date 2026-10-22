@@ -27,3 +27,4 @@ contracts/cache/
 .next/
 node_modules/
 package-lock.json
+.paythos-data/

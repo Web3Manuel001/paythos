@@ -30,18 +30,21 @@ export class FileLedgerStore {
         for (const [k, v] of Object.entries(parsed)) {
           this.state.set(k, v as PersistedChannel);
         }
-      } catch (e) {
-        console.warn('[Paythos Store] Stale store corrupted, initializing fresh.');
+      } catch {
+        console.warn('[Paythos Store] Stale store corrupted or empty, initializing fresh.');
       }
     }
   }
 
+  // ATOMIC WRITE: Write to .tmp and rename to prevent file corruption mid-write
   save() {
     const obj: Record<string, PersistedChannel> = {};
     for (const [k, v] of this.state.entries()) {
       obj[k] = v;
     }
-    fs.writeFileSync(this.filePath, JSON.stringify(obj, null, 2), 'utf8');
+    const tmpPath = `${this.filePath}.tmp.${Date.now()}`;
+    fs.writeFileSync(tmpPath, JSON.stringify(obj, null, 2), 'utf8');
+    fs.renameSync(tmpPath, this.filePath);
   }
 
   getChannel(channelKey: string): PersistedChannel | undefined {

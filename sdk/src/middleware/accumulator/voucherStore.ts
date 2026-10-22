@@ -131,6 +131,7 @@ export class VoucherAccumulator {
       refreshed.isFlushing = false;
       this.channels.set(channelKey, refreshed);
 
+      if (this.onSettled) this.onSettled(refreshed.latestVoucher.voucher.agentKey, amountToFlush);
       return { settledOnChain: true, txHash };
     } catch (err) {
       // FAILURE PATH FIX: Re-read map so newer vouchers are NOT wiped on error!
