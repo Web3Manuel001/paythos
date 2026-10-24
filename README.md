@@ -33,8 +33,8 @@ The initial swap flow should use a user-connected wallet and require the user to
 - `contracts/` — Solidity contracts, scripts, and Foundry tests.
 - `sdk/` — TypeScript signer, client, paywall, storage, and integrations.
 - `gofer/` — agent runtime and policy prototypes.
-- `web/app/` — current Arc-oriented dashboard/landing experience.
-- `web/src/app/` — an older, conflicting Base-oriented page that needs consolidation.
+- `web/config/` — Arc Testnet network and deployment settings.
+- `web/app/` — Arc Testnet landing page with live RPC reads and verified transaction status.
 - `docs/PRODUCT_DIRECTION.md` — narrow MVP plan and staged swap design.
 
 ## Development
@@ -53,9 +53,10 @@ Useful commands from the repository root:
 npm run build          # Build the web app
 npm run test:contracts # Run Foundry contract tests
 npm --prefix sdk run build
+npm run test:sdk:arc   # Read-only SDK smoke test against the Arc Testnet vault
 ```
 
-The SDK currently has no dedicated automated test suite. Several old scripts under `sdk/` are manual demos and depend on obsolete local deployments; do not treat them as security validation.
+The SDK's Arc smoke test checks live RPC, contract reads, and the settlement transaction receipt. Legacy local-chain demo scripts have been removed; do not treat the smoke test as security validation.
 
 ## Security status
 

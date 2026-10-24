@@ -1,36 +1,21 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Paythos web app
 
-## Getting Started
+The landing page reads live Arc Testnet data on each request: RPC chain ID, latest block, the deployed vault's settlement token, and the receipt for the configured smoke transaction. If the RPC or contract read fails, it displays an unavailable state and the error instead of substituting sample values.
 
-First, run the development server:
+## Run locally
 
-```bash
+```sh
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The default RPC and vault are configured in `config/paythos.ts`. Override them on the server with:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```sh
+PAYTHOS_RPC_URL=https://your-arc-rpc.example
+PAYTHOS_VAULT_ADDRESS=0x...
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The configured RPC must report Arc Testnet chain ID `5042002`. The browser does not receive either server variable. Privy wallet UI stays disabled unless `NEXT_PUBLIC_PRIVY_APP_ID` is configured.
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+This page is a testnet prototype, not a trading interface. It does not show wallet balances, user activity, swap quotes, or execute trades.

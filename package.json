@@ -6,7 +6,8 @@
     "dev": "npm --prefix web run dev",
     "build": "npm --prefix web run build",
     "start": "npm --prefix web run start",
-    "test:contracts": "forge test"
+    "test:contracts": "forge test",
+    "test:sdk:arc": "npm --prefix sdk run test:arc"
   },
   "dependencies": {
     "viem": "^2.21.0"

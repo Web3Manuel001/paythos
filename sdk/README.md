@@ -23,7 +23,15 @@ npm install
 npm run build
 ```
 
-The build emits JavaScript and declaration files to `dist/`. There is no dedicated SDK test suite yet. The scripts under the repository's `sdk/` directory are demos, several of which depend on old local contract deployments.
+The build emits JavaScript and declaration files to `dist/`. Legacy scripts that used obsolete local deployments or returned invented API data have been removed from `sdk/examples/`.
+
+Run the read-only live Arc Testnet smoke test with:
+
+```sh
+npm run test:arc
+```
+
+It uses the deployed vault and verifies the RPC chain ID, settlement token, empty-session defaults, and successful smoke settlement receipt targeting the configured vault. Set `PAYTHOS_TEST_RPC_URL` or `PAYTHOS_TEST_VAULT_ADDRESS` to override the public defaults. The test never signs or submits a transaction.
 
 ## Important operational limits
 

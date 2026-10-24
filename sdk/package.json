@@ -20,7 +20,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "mcp-server": "node dist/integrations/mcp-server/index.js"
+    "mcp-server": "node dist/integrations/mcp-server/index.js",
+    "test:arc": "tsx --test tests/arc-vault.test.ts"
   },
   "keywords": [],
   "type": "module",

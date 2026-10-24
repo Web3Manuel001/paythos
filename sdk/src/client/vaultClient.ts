@@ -126,6 +126,14 @@ export class PaythosVaultClient {
     };
   }
 
+  async getSettlementToken(): Promise<Address> {
+    return await this.publicClient.readContract({
+      address: this.vaultAddress,
+      abi: PAYTHOS_VAULT_ABI,
+      functionName: 'settlementToken',
+    });
+  }
+
   async getSettledAmount(
     agentKey: Address,
     merchant: Address,
