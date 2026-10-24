@@ -6,8 +6,7 @@
     "dev": "npm --prefix web run dev",
     "build": "npm --prefix web run build",
     "start": "npm --prefix web run start",
-    "test:contracts": "forge test",
-    "test:sdk": "npx tsx test-smoke.ts"
+    "test:contracts": "forge test"
   },
   "dependencies": {
     "viem": "^2.21.0"

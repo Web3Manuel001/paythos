@@ -4,7 +4,7 @@ import type { Address, Hash } from 'viem';
 
 export interface X402PaymentOption {
   scheme: 'exact';
-  network: string; // CAIP-2 identifier (e.g. "eip155:8453", "eip155:31337")
+  network: string; // CAIP-2 identifier (Arc Testnet: "eip155:5042002")
   amount: string;  // Base units (e.g. "2500000" for 2.50 USDC)
   asset: Address;  // Contract address of token
   payTo: Address;  // Recipient address

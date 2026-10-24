@@ -1,11 +1,26 @@
 {
   "name": "paythos-sdk",
   "version": "1.0.0",
-  "description": "Paythos — Non-custodial session policies & x402 settlement protocol for autonomous agents on Base.",
-  "main": "index.js",
+  "description": "Paythos — spend policies and x402 settlement for autonomous agents on Arc.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp.d.ts",
+      "import": "./dist/mcp.js"
+    },
+    "./integrations/mcp-server": {
+      "types": "./dist/integrations/mcp-server/index.d.ts",
+      "import": "./dist/integrations/mcp-server/index.js"
+    }
+  },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "tsc"
+    "build": "tsc",
+    "mcp-server": "node dist/integrations/mcp-server/index.js"
   },
   "keywords": [],
   "type": "module",
@@ -23,5 +38,5 @@
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
-  "files": "[\"dist\", \"README.md\"]"
+  "files": ["dist", "README.md"]
 }

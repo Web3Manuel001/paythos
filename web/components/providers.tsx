@@ -2,7 +2,16 @@
 
 import React from 'react';
 import { PrivyProvider } from '@privy-io/react-auth';
-import { base, baseSepolia } from 'viem/chains';
+import { defineChain } from 'viem';
+
+const arcTestnet = defineChain({
+  id: 5042002,
+  name: 'Arc Testnet',
+  nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 6 },
+  rpcUrls: { default: { http: ['https://rpc.testnet.arc.io'] } },
+  blockExplorers: { default: { name: 'ArcScan', url: 'https://testnet.arcscan.app' } },
+  testnet: true,
+});
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   const rawAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID;
@@ -28,8 +37,8 @@ export default function Providers({ children }: { children: React.ReactNode }) {
             createOnLogin: 'users-without-wallets',
           },
         },
-        defaultChain: baseSepolia,
-        supportedChains: [base, baseSepolia],
+        defaultChain: arcTestnet,
+        supportedChains: [arcTestnet],
       }}
     >
       {children}

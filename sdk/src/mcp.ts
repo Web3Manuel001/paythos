@@ -1,141 +1,105 @@
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
-import { Paythos } from './client.js';
-import { type Address, type Hex } from 'viem';
+import { z } from 'zod';
+import { formatUnits, isAddress, type Address } from 'viem';
+import { PaythosVaultClient } from './client/vaultClient.js';
 
-// Universal Environment Fallbacks
-const VAULT_ADDRESS = (process.env.AGENTPAY_VAULT_ADDRESS || process.env.VAULT_ADDRESS || '0xf57c0cEBc9238A3fe10dE6f05fa017aC68878347') as Address;
-const AGENT_KEY = (process.env.AGENTPAY_AGENT_KEY || process.env.AGENT_KEY || '') as Hex;
-const RPC_URL = process.env.AGENTPAY_RPC_URL || process.env.RPC_URL || 'https://sepolia.base.org';
+export const ARC_TESTNET = {
+  chainId: 5042002,
+  rpcUrl: 'https://rpc.testnet.arc.io',
+  explorerUrl: 'https://testnet.arcscan.app',
+} as const;
 
-const server = new Server(
-  {
-    name: 'agentpay-universal-mcp',
-    version: '0.2.0',
-  },
-  {
-    capabilities: { tools: {} },
-  }
-);
-
-// Lazy SDK initializer to support dynamic environment configurations
-function getClient(): Paythos {
-  if (!AGENT_KEY) {
-    throw new Error('Missing AGENTPAY_AGENT_KEY environment variable for MCP session.');
-  }
-  return new Paythos({
-    privateKey: AGENT_KEY,
-    vaultAddress: VAULT_ADDRESS,
-    rpcUrl: RPC_URL,
-  });
+export interface PaythosMcpConfig {
+  vaultAddress: Address;
+  agentAddress: Address;
+  rpcUrl?: string;
 }
 
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return {
-    tools: [
-      {
-        name: 'agentpay_get_budget',
-        description: 'Check available USDC spending budget and session status in the on-chain AgentVault.',
-        inputSchema: { type: 'object', properties: {} },
-      },
-      {
-        name: 'agentpay_execute_payment',
-        description: 'Execute an on-chain USDC payment to an address on Base within daily allowance limits.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            tokenAddress: { type: 'string', description: 'ERC-20 token address (defaults to Base USDC)' },
-            recipient: { type: 'string', description: 'Destination 0x address' },
-            amountUsdc: { type: 'string', description: 'Amount in USDC (e.g. "1.50")' },
-          },
-          required: ['recipient', 'amountUsdc'],
-        },
-      },
-      {
-        name: 'agentpay_fetch_x402_api',
-        description: 'Fetch an API protected by an HTTP 402 paywall. Automatically pays required USDC from the vault and unlocks data.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            url: { type: 'string', description: 'URL of the paywalled resource' },
-          },
-          required: ['url'],
-        },
-      },
-    ],
-  };
-});
-
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-  const client = getClient();
-
-  try {
-    if (name === 'agentpay_get_budget') {
-      const status = await client.getSessionStatus();
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            dailyLimitUsdc: status.dailyLimit,
-            remainingTodayUsdc: status.remainingToday,
-            spentTodayUsdc: status.spentToday,
-            isPolicyActive: status.isActive,
-          }, null, 2),
-        }],
-      };
-    }
-
-    if (name === 'agentpay_execute_payment') {
-      const { recipient, amountUsdc, tokenAddress } = args as any;
-      const txHash = await client.pay({
-        tokenAddress: tokenAddress || '0x036CbD53842c5426634e7929541eC2318f3dCF7e', // Base Sepolia USDC
-        recipient: recipient as Address,
-        amountUsdc: String(amountUsdc),
-      });
-
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            status: 'SETTLED',
-            txHash,
-            amountPaid: amountUsdc,
-            recipient,
-          }, null, 2),
-        }],
-      };
-    }
-
-    if (name === 'agentpay_fetch_x402_api') {
-      const { url } = args as any;
-      const result = await client.fetchWithPayment(url);
-
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            status: 'SUCCESS',
-            costPaidUsdc: result.costPaid,
-            txHash: result.txHash,
-            payload: result.data,
-          }, null, 2),
-        }],
-      };
-    }
-
-    throw new Error(`Tool ${name} not recognized.`);
-  } catch (err: any) {
-    return {
-      isError: true,
-      content: [{ type: 'text', text: `Paythos MCP Error: ${err.message || err}` }],
-    };
+/**
+ * Creates a read-only MCP server for inspecting an Arc Testnet Paythos session.
+ * No private key is accepted and importing this module has no side effects.
+ */
+export function createPaythosMcpServer(config: PaythosMcpConfig): McpServer {
+  if (!isAddress(config.vaultAddress) || !isAddress(config.agentAddress)) {
+    throw new Error('Paythos MCP requires valid vaultAddress and agentAddress values.');
   }
-});
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
+  const client = new PaythosVaultClient(
+    config.vaultAddress,
+    config.rpcUrl ?? ARC_TESTNET.rpcUrl,
+  );
+  const server = new McpServer({ name: 'paythos-arc', version: '1.0.0' });
+
+  server.registerTool(
+    'paythos_get_session_status',
+    {
+      title: 'Read Paythos session status',
+      description: 'Read the configured agent session allowance and expiry from the Paythos vault on Arc Testnet. This tool cannot move funds or sign transactions.',
+      inputSchema: { },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async () => {
+      const observedChainId = await client.publicClient.getChainId();
+      if (observedChainId !== ARC_TESTNET.chainId) {
+        throw new Error(`Expected Arc Testnet (${ARC_TESTNET.chainId}), RPC returned chain ${observedChainId}.`);
+      }
+      const session = await client.getSession(config.agentAddress);
+      const remaining = session.dailyLimit > session.spentToday
+        ? session.dailyLimit - session.spentToday
+        : 0n;
+      const status = {
+        network: 'Arc Testnet',
+        chainId: ARC_TESTNET.chainId,
+        vaultAddress: config.vaultAddress,
+        agentAddress: config.agentAddress,
+        dailyLimitUsdc: formatUnits(session.dailyLimit, 6),
+        spentTodayUsdc: formatUnits(session.spentToday, 6),
+        remainingTodayUsdc: formatUnits(remaining, 6),
+        expiresAt: new Date(Number(session.expiresAt) * 1000).toISOString(),
+        isActive: session.isActive,
+      };
+      return { content: [{ type: 'text', text: JSON.stringify(status, null, 2) }] };
+    },
+  );
+
+  server.registerTool(
+    'paythos_get_settled_amount',
+    {
+      title: 'Read settled payment total',
+      description: 'Read the cumulative amount already settled for a merchant and token in a Paythos session. This tool cannot move funds or sign transactions.',
+      inputSchema: {
+        merchantAddress: z.string().refine(isAddress, 'Expected an EVM address'),
+        tokenAddress: z.string().refine(isAddress, 'Expected an EVM address'),
+        sessionId: z.string().regex(/^\d+$/, 'Expected an unsigned integer string').default('1'),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ merchantAddress, tokenAddress, sessionId }) => {
+      const observedChainId = await client.publicClient.getChainId();
+      if (observedChainId !== ARC_TESTNET.chainId) {
+        throw new Error(`Expected Arc Testnet (${ARC_TESTNET.chainId}), RPC returned chain ${observedChainId}.`);
+      }
+      const amount = await client.getSettledAmount(
+        config.agentAddress,
+        merchantAddress as Address,
+        BigInt(sessionId),
+        tokenAddress as Address,
+      );
+      return { content: [{ type: 'text', text: JSON.stringify({
+        network: 'Arc Testnet',
+        amountAtomic: amount.toString(),
+        decimals: 6,
+        amountUsdc: formatUnits(amount, 6),
+      }, null, 2) }] };
+    },
+  );
+
+  return server;
+}
+
+/** Explicit stdio entry point for local MCP clients. */
+export async function startPaythosMcpServer(config: PaythosMcpConfig): Promise<void> {
+  const server = createPaythosMcpServer(config);
+  await server.connect(new StdioServerTransport());
+}

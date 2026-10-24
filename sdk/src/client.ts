@@ -2,6 +2,7 @@ import {
   createWalletClient,
   createPublicClient,
   http,
+  defineChain,
   parseUnits,
   formatUnits,
   type Address,
@@ -10,9 +11,17 @@ import {
   type Account,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { localhost } from 'viem/chains';
 import PaythosVaultABI from './abi/PaythosVault.json' with { type: 'json' };
 import type { X402PaymentRequired, X402PaymentSignature, X402PaymentResponse } from './types.js';
+
+const arcTestnet = defineChain({
+  id: 5042002,
+  name: 'Arc Testnet',
+  nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 6 },
+  rpcUrls: { default: { http: ['https://rpc.testnet.arc.io'] } },
+  blockExplorers: { default: { name: 'ArcScan', url: 'https://testnet.arcscan.app' } },
+  testnet: true,
+});
 
 export interface SessionStatus {
   dailyLimit: string;
@@ -24,7 +33,8 @@ export interface SessionStatus {
 }
 
 /**
- * Paythos — Non-custodial session policies & x402 settlement client for autonomous agents on Base.
+ * Legacy direct-payment client for Arc Testnet. Prefer PaythosVaultClient and
+ * voucher-based settlement for new integrations.
  */
 export class Paythos {
   public publicClient: any;
@@ -40,36 +50,44 @@ export class Paythos {
     this.account = privateKeyToAccount(options.privateKey);
     this.vaultAddress = options.vaultAddress;
 
-    const transport = http(options.rpcUrl || 'http://127.0.0.1:8545');
+    const transport = http(options.rpcUrl || arcTestnet.rpcUrls.default.http[0]);
 
     this.publicClient = createPublicClient({
-      chain: localhost,
+      chain: arcTestnet,
       transport,
     });
 
     this.walletClient = createWalletClient({
       account: this.account,
-      chain: localhost,
+      chain: arcTestnet,
       transport,
     });
+  }
+
+  private async assertArcTestnet(): Promise<void> {
+    const chainId = await this.publicClient.getChainId();
+    if (chainId !== arcTestnet.id) {
+      throw new Error(`Expected Arc Testnet (${arcTestnet.id}), RPC returned chain ${chainId}.`);
+    }
   }
 
   // --- AGENT ACTIONS ---
 
   async getSessionStatus(agentAddress?: Address): Promise<SessionStatus> {
+    await this.assertArcTestnet();
     const target = agentAddress || this.account.address;
     const policy = (await this.publicClient.readContract({
       address: this.vaultAddress,
       abi: PaythosVaultABI,
       functionName: 'sessions',
       args: [target],
-    })) as [bigint, bigint, bigint, bigint, boolean];
+    })) as [bigint, bigint, bigint, bigint, bigint, boolean];
 
     const dailyLimit = policy[0];
     const spentToday = policy[1];
     const lastReset = policy[2];
     const expiresAt = policy[3];
-    const isActive = policy[4];
+    const isActive = policy[5];
 
     const remaining = dailyLimit > spentToday ? dailyLimit - spentToday : 0n;
 
@@ -88,6 +106,7 @@ export class Paythos {
     recipient: Address;
     amountUsdc: string;
   }): Promise<Hash> {
+    await this.assertArcTestnet();
     const parsedAmount = parseUnits(params.amountUsdc, 6);
 
     const hash = await this.walletClient.writeContract({
@@ -188,6 +207,7 @@ export class Paythos {
     dailyLimitUsdc: string;
     durationSeconds: number;
   }): Promise<Hash> {
+    await this.assertArcTestnet();
     const limit = parseUnits(params.dailyLimitUsdc, 6);
 
     const hash = await this.walletClient.writeContract({
@@ -202,6 +222,7 @@ export class Paythos {
   }
 
   async revokeSession(agentAddress: Address): Promise<Hash> {
+    await this.assertArcTestnet();
     const hash = await this.walletClient.writeContract({
       address: this.vaultAddress,
       abi: PaythosVaultABI,

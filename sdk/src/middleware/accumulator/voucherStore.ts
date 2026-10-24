@@ -13,6 +13,7 @@ export interface ChannelState {
 }
 
 export class VoucherAccumulator {
+  onSettled?: (agentKey: Address, amount?: bigint) => void;
   private channels: Map<string, ChannelState> = new Map();
   private settlementThreshold: bigint;
   private maxVoucherAgeSeconds: number;
@@ -131,7 +132,13 @@ export class VoucherAccumulator {
       refreshed.isFlushing = false;
       this.channels.set(channelKey, refreshed);
 
-      if (this.onSettled) this.onSettled(refreshed.latestVoucher.voucher.agentKey, amountToFlush);
+      try {
+        this.onSettled?.(refreshed.latestVoucher.voucher.agentKey, amountToFlush);
+      } catch (callbackError) {
+        // A host application's notification callback cannot turn a confirmed
+        // chain settlement into a failed flush/retry.
+        console.error('[Paythos Accumulator] onSettled callback failed:', callbackError);
+      }
       return { settledOnChain: true, txHash };
     } catch (err) {
       // FAILURE PATH FIX: Re-read map so newer vouchers are NOT wiped on error!

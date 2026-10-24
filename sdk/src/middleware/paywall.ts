@@ -23,14 +23,6 @@ export interface PaywallConfig {
 
 export function createX402Paywall(config: PaywallConfig) {
   const rateLimiter = config.rateLimiter || new TokenBucketRateLimiter(20, 5);
-  const sessionCache: Map<string, { dailyLimit: bigint; spentToday: bigint; expiresAt: bigint; lastChecked: number }> = new Map();
-  let vaultBalanceCache: { balance: bigint; lastChecked: number } = { balance: 0n, lastChecked: 0 };
-
-  // CACHE INVALIDATION HOOK: Invalidate session cache the instant a batch settles on-chain
-  config.accumulator.onSettled = (agentKey: Address) => {
-    sessionCache.delete(agentKey.toLowerCase());
-    vaultBalanceCache = { balance: 0n, lastChecked: 0 }; // Force refresh vault balance
-  };
 
   return async function handlePaywall(req: any, res: any, next: () => void) {
     const rawHeader = req.headers['x-paythos-voucher'] || req.headers['x-payment-voucher'];
@@ -140,62 +132,46 @@ export function createX402Paywall(config: PaywallConfig) {
     }
 
     // 5. ON-CHAIN SESSION & TOTAL UNSETTLED CAP ENFORCEMENT
-    const agentLower = voucher.agentKey.toLowerCase();
-    const cached = sessionCache.get(agentLower);
-    const nowMs = Date.now();
-    let session = cached;
-
-    if (!cached || nowMs - cached.lastChecked > 60_000) {
-      try {
-        const onChain = await config.vaultClient.getSession(voucher.agentKey);
-        if (!onChain.isActive || now > onChain.expiresAt) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ error: 'Agent session inactive or expired on-chain' }));
-        }
-
-        session = {
-          dailyLimit: onChain.dailyLimit,
-          spentToday: onChain.spentToday,
-          expiresAt: onChain.expiresAt,
-          lastChecked: nowMs,
-        };
-        sessionCache.set(agentLower, session);
-      } catch {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'Unable to verify on-chain session. Failing closed.' }));
+    let session;
+    try {
+      // Read every request so an on-chain revocation or spend-limit update takes
+      // effect immediately at the paywall instead of waiting for a cache TTL.
+      session = await config.vaultClient.getSession(voucher.agentKey);
+      if (!session.isActive || now > session.expiresAt) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Agent session inactive or expired on-chain' }));
       }
+    } catch {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Unable to verify on-chain session. Failing closed.' }));
     }
 
     // ENFORCE CAP ON TOTAL UNSETTLED DEBT
-    if (session) {
-      if (session.spentToday + unsettled > session.dailyLimit) {
-        res.writeHead(403, { 'Content-Type': 'application/json' });
-        return res.end(
-          JSON.stringify({
-            error: 'On-chain daily spend cap exceeded by total unsettled debt',
-            dailyLimit: session.dailyLimit.toString(),
-            spentToday: session.spentToday.toString(),
-            unsettledClaim: unsettled.toString(),
-          })
-        );
-      }
+    if (session.spentToday + unsettled > session.dailyLimit) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      return res.end(
+        JSON.stringify({
+          error: 'On-chain daily spend cap exceeded by total unsettled debt',
+          dailyLimit: session.dailyLimit.toString(),
+          spentToday: session.spentToday.toString(),
+          unsettledClaim: unsettled.toString(),
+        })
+      );
     }
 
-    // 6. ON-CHAIN VAULT SOLVENCY CHECK (Cached 30s)
-    let currentVaultBalance = vaultBalanceCache.balance;
-    if (nowMs - vaultBalanceCache.lastChecked > 30_000) {
-      try {
-        currentVaultBalance = await config.vaultClient.publicClient.readContract({
-          address: config.tokenAddress,
-          abi: [{ type: 'function', name: 'balanceOf', inputs: [{ name: 'account', type: 'address' }], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' }],
-          functionName: 'balanceOf',
-          args: [config.vaultAddress],
-        });
-        vaultBalanceCache = { balance: currentVaultBalance, lastChecked: nowMs };
-      } catch {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ error: 'Unable to verify vault collateral solvency' }));
-      }
+    // 6. Read current collateral for every request. A cached positive balance
+    // could authorize service after collateral has been withdrawn or consumed.
+    let currentVaultBalance: bigint;
+    try {
+      currentVaultBalance = await config.vaultClient.publicClient.readContract({
+        address: config.tokenAddress,
+        abi: [{ type: 'function', name: 'balanceOf', inputs: [{ name: 'account', type: 'address' }], outputs: [{ name: '', type: 'uint256' }], stateMutability: 'view' }],
+        functionName: 'balanceOf',
+        args: [config.vaultAddress],
+      });
+    } catch {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'Unable to verify vault collateral solvency' }));
     }
 
     if (currentVaultBalance < unsettled) {

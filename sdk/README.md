@@ -1,83 +1,37 @@
-# Paythos Protocol 🛡️🤖
+# Paythos SDK (prototype)
 
-> **Autonomous Agent Spend Governance & Cryptographic Authorization Layer for Arc L1 and Circle USDC.**
+This package contains TypeScript utilities for EIP-712 payment vouchers, an Arc Testnet vault client, and x402-style merchant middleware. The current contract/deployment proof is on Arc Testnet (`5042002`). The package is not audited and is not ready for production funds.
 
-[![Network: Arc L1](https://img.shields.io/badge/Network-Arc_Layer--1-blue.svg)](https://arc.network)
-[![Settlement: Circle USDC](https://img.shields.io/badge/Asset-Native_USDC_0x3600...0000-emerald.svg)](https://docs.arc.io/arc/references/contract-addresses)
-[![Standard: x402 v2.1](https://img.shields.io/badge/Standard-x402_v2.1-purple.svg)](https://x402.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-zinc.svg)](LICENSE)
+## Framework integrations
 
----
+- **MCP:** `paythos-sdk/mcp` provides read-only session and settled-total tools. The stdio entry point requires `PAYTHOS_VAULT_ADDRESS` and `PAYTHOS_AGENT_ADDRESS`; it does not accept a signing key or initiate payments. Example:
 
-## ⚡ What is Paythos?
+  ```sh
+  PAYTHOS_VAULT_ADDRESS=0x... PAYTHOS_AGENT_ADDRESS=0x... npm run mcp-server
+  ```
 
-Paythos is an **enterprise spend-governance and policy layer** designed for autonomous software. It provides non-custodial session management, deterministic daily caps, and instant prompt-injection killswitches on top of x402 micropayment channels.
+- **LangChain:** `createLangChainTools` dynamically loads the consuming app's `langchain` package and returns a native read-only session tool. Install `langchain` in that app and pass an Arc `PaythosVaultClient` plus the agent address.
+- **ElizaOS:** `createAgentPayElizaPlugin` returns a read-only session provider and no actions. Its shape follows the current `@elizaos/core` plugin/provider contract; validate it against the exact ElizaOS version used by your agent before deployment.
+- **MPC custody:** this repository has no multi-party-computation wallet or key-sharing implementation. `AgentVoucherSigner` uses a single EVM private key and a local file ledger.
 
-### Current Features (Live in Repository)
-* **Cryptographic Session Scoping:** Ephemeral agent keys authorized on-chain with strict daily spend caps and TTL expiries.
-* **Instant Prompt-Injection Killswitch:** Immediate on-chain session revocation with zero settlement delay.
-* **Monotonic Nonce Enforcement:** On-chain sequencing preventing replay attacks or stale-state claims.
-* **Dual-Trigger Sweep Accumulator:** In-memory accumulators flush vouchers to Arc L1 when debt reaches $5.00 OR when voucher age reaches 20 minutes (with background `.unref()` timer sweep and exponential backoff alerts).
-* **Solvency-Enforcing Paywall:** Validates that total cumulative unsettled debt does not exceed the agent's remaining daily cap, and checks on-chain vault USDC balance before serving API data.
+None of these framework adapters can execute user-approved swaps. Swap quotes, transaction review, wallet signing, and a wallet-connect UI have not been implemented. `createX402Paywall` requires `vaultAddress` and verifies the transaction's Arc chain, vault event, token, recipient, payer, and amount.
 
-### Planned Integrations [Roadmap]
-* **Circle Programmable Wallets:** Developer-controlled wallet API for enterprise agent key management.
-* **Circle Nanopayments & Gateway:** Gas-free batched x402 settlement facilitation.
-* **Circle CCTP:** Cross-chain burn-and-mint liquidity routing between Arc L1 and Base.
+## Build
 
----
+```sh
+npm install
+npm run build
+```
 
-## 📜 Verified On-Chain Deployments & Proofs
+The build emits JavaScript and declaration files to `dist/`. There is no dedicated SDK test suite yet. The scripts under the repository's `sdk/` directory are demos, several of which depend on old local contract deployments.
 
-| Component | Network | Address / Hash | Explorer Proof |
-| :--- | :--- | :--- | :--- |
-| **Hardened Vault Core** | Arc Testnet (`5042002`) | `0xa9d5525BE440831c64695d30c915DF303E0151EF` | [ArcScan Contract](https://testnet.arcscan.app/address/0xa9d5525BE440831c64695d30c915DF303E0151EF) |
-| **Verified Smoke Settlement** | Arc Testnet (Block #68409300) | `0xf7113e7d05dad2ae241439afd16c3dc8f093cbe415cf9c99b87134014bad193d` | [ArcScan Settlement Proof](https://testnet.arcscan.app/tx/0xf7113e7d05dad2ae241439afd16c3dc8f093cbe415cf9c99b87134014bad193d) |
-| **Telemetry & Disclosure** | Self-Funded Smoke Test | 157,959 gas (~$0.004 on testnet) | Verified in Tx Receipt ($0.01 initial test) |
-| **Settlement Asset** | Arc Native USDC | `0x3600000000000000000000000000000000000000` | [Arc Official Registry](https://docs.arc.io/arc/references/contract-addresses) |
-| **Protocol Take Rate** | On-Chain Enforced | 150 bps (1.50%) | Verified in Deployed Bytecode |
-| **Base Liquidity Spoke** | Base Sepolia (`84532`) | `0x6E0837c166c01710dC86f2E25DAE2fFD574343D9` | [Basescan Explorer](https://sepolia.basescan.org/address/0x6E0837c166c01710dC86f2E25DAE2fFD574343D9) |
+## Important operational limits
 
----
+- `AgentVoucherSigner` stores state in a local JSON ledger and uses an in-process lock. Run one signer process per storage directory; separate processes can race.
+- `VoucherAccumulator` keeps pending voucher and retry state in memory. A process restart loses that state.
+- The voucher paywall reads session state and vault token balance from the configured RPC on each accepted request. RPC errors fail closed; configure an appropriately reliable RPC endpoint.
+- The legacy x402 middleware has a process-local replay guard. Do not run it across multiple workers or treat it as production-ready until replay state is durable and shared.
+- The current vault uses an agent-wide session budget. Merchant-specific and task-specific budget enforcement is not implemented on-chain.
+- No swap execution adapter or wallet approval UI is included. See the root [product direction](../docs/PRODUCT_DIRECTION.md) for the staged user-approved swap plan.
 
-## 🚀 Quickstart
-
-### 1. Autonomous Agent Signer
-```typescript
-import { AgentVoucherSigner } from './sdk/src/signer/voucherSigner';
-
-const signer = new AgentVoucherSigner(process.env.AGENT_SESSION_KEY, '0xa9d5525BE440831c64695d30c915DF303E0151EF', 5042002);
-const payment = await signer.signCumulativePayment(
-  merchantAddress, 
-  '0x3600000000000000000000000000000000000000', 
-  2000n
-);
-
-await fetch('https://api.provider.com/data', {
-  headers: { 'X-Paythos-Voucher': payment.headerPayload }
-});
-2. Merchant x402 Middleware (with On-Chain Solvency Check)
-code
-TypeScript
-import { createX402Paywall, VoucherAccumulator } from './sdk/src/middleware/paywall';
-import { PaythosVaultClient } from './sdk/src/client/vaultClient';
-
-const vaultClient = new PaythosVaultClient(
-  '0xa9d5525BE440831c64695d30c915DF303E0151EF',
-  'https://rpc.testnet.arc.io',
-  merchantWallet
-);
-
-app.use('/api/data', createX402Paywall({
-  merchantAddress: '0xYourMerchant',
-  vaultAddress: '0xa9d5525BE440831c64695d30c915DF303E0151EF',
-  tokenAddress: '0x3600000000000000000000000000000000000000',
-  chainId: 5042002,
-  pricePerCall: 2000n,
-  vaultClient, // Required for on-chain cap & solvency verification
-  accumulator: new VoucherAccumulator(vaultClient, 5_000_000n, 1200) // Flush at $5 OR 20 mins
-}));
-🧪 Security & Verification
-Foundry Test Suite: 10 passing unit and property-based fuzz tests under via_ir on Solc 0.8.24.
-Checks-Effects-Interactions (CEI): Reentrancy protection and strict state-before-transfer ordering.
-Non-Custodial Multi-Step Timelocks: 6-hour delay on owner collateral withdrawals to protect merchant settlement guarantees.
+See the root [README](../README.md) for repository status and deployment evidence.
